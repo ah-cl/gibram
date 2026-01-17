@@ -62,4 +62,4 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
           repository: ${{ env.IMAGE_NAME }}
           short-description: "GibRAM - Graph in-Buffer Retrieval & Associative Memory"
-          readme-filepath: ./README.md
+          readme-filepath: ./DOCKER.md
