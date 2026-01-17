@@ -5,8 +5,7 @@ GraphRAG-style knowledge graph indexing with automatic entity extraction, relati
 ## Installation
 
 ```bash
-cd sdk/python
-pip install -e .
+pip install gibram
 ```
 
 ## Quick Start
