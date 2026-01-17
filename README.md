@@ -2,7 +2,11 @@
 
 **Graph in-Buffer Retrieval & Associative Memory**
 
-GibRAM is an in memory knowledge graph server designed for retrieval augmented generation (RAG) workflows. It combines a lightweight graph store with vector search so that related pieces of information remain connected in memory. This makes it easier to retrieve related regulations, articles or other text when a query mentions specific subjects.
+- **Graph in-Buffer**: Graph structure (entities + relationships) stored in RAM
+- **Retrieval**: Query mechanism for retrieving relevant context in RAG workflows  
+- **Associative Memory**: Traverse between associated nodes via relationships, all accessed from memory
+
+GibRAM is an in-memory knowledge graph server designed for retrieval augmented generation (RAG) workflows. It combines a lightweight graph store with vector search so that related pieces of information remain connected in memory. This makes it easier to retrieve related regulations, articles or other text when a query mentions specific subjects.
 
 ## Why GibRAM?
 - In memory and Ephemeral: Data lives in RAM with a configurable time to live. It is meant for short lived analysis and exploration rather than persistent storage.
