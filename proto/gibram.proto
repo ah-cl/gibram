@@ -1,0 +1,568 @@
+syntax = "proto3";
+package gibram.v1;
+
+option go_package = "github.com/gibram-io/gibram/proto/gibrampb";
+
+// =============================================================================
+// ENVELOPE - Wire protocol wrapper
+// =============================================================================
+
+message Envelope {
+  uint32 version = 1;           // protocol version (1)
+  uint64 request_id = 2;        // correlation id
+  CommandType cmd_type = 3;     // command type
+  bytes payload = 4;            // serialized command/response
+  string session_id = 5;        // mandatory session identifier
+}
+
+enum CommandType {
+  CMD_UNKNOWN = 0;
+  
+  // Basic (1-9)
+  CMD_PING = 1;
+  CMD_PONG = 2;
+  CMD_INFO = 3;
+  CMD_INFO_RESPONSE = 4;
+  CMD_ERROR = 5;
+  CMD_OK = 6;
+  CMD_HEALTH = 7;
+  CMD_HEALTH_RESPONSE = 8;
+  
+  // Document (10-19)
+  CMD_ADD_DOCUMENT = 10;
+  CMD_GET_DOCUMENT = 11;
+  CMD_DELETE_DOCUMENT = 12;
+  CMD_DOCUMENT_RESPONSE = 13;
+  
+  // TextUnit (20-29)
+  CMD_ADD_TEXTUNIT = 20;
+  CMD_GET_TEXTUNIT = 21;
+  CMD_DELETE_TEXTUNIT = 22;
+  CMD_LINK_TEXTUNIT_ENTITY = 23;
+  CMD_TEXTUNIT_RESPONSE = 24;
+  
+  // Entity (30-39)
+  CMD_ADD_ENTITY = 30;
+  CMD_GET_ENTITY = 31;
+  CMD_GET_ENTITY_BY_TITLE = 32;
+  CMD_UPDATE_ENTITY_DESC = 33;
+  CMD_DELETE_ENTITY = 34;
+  CMD_ENTITY_RESPONSE = 35;
+  
+  // Relationship (40-49)
+  CMD_ADD_RELATIONSHIP = 40;
+  CMD_GET_RELATIONSHIP = 41;
+  CMD_DELETE_RELATIONSHIP = 42;
+  CMD_RELATIONSHIP_RESPONSE = 43;
+  
+  // Community (50-59)
+  CMD_ADD_COMMUNITY = 50;
+  CMD_GET_COMMUNITY = 51;
+  CMD_DELETE_COMMUNITY = 52;
+  CMD_COMPUTE_COMMUNITIES = 53;
+  CMD_HIERARCHICAL_LEIDEN = 54;
+  CMD_REBUILD_INDEX = 55;
+  CMD_COMMUNITY_RESPONSE = 56;
+  CMD_COMMUNITIES_RESPONSE = 57;
+  
+  // Query (60-69)
+  CMD_QUERY = 60;
+  CMD_QUERY_RESPONSE = 61;
+  CMD_EXPLAIN = 62;
+  CMD_EXPLAIN_RESPONSE = 63;
+  
+  // Session Management (70-79) - replaces per-object TTL
+  CMD_LIST_SESSIONS = 70;
+  CMD_DELETE_SESSION = 71;
+  CMD_SESSION_INFO = 72;
+  CMD_SET_SESSION_TTL = 73;
+  CMD_TOUCH_SESSION = 74;
+  CMD_SESSIONS_RESPONSE = 75;
+  CMD_SESSION_INFO_RESPONSE = 76;
+  
+  // Bulk Operations (80-99)
+  CMD_MSET_ENTITIES = 80;
+  CMD_MGET_ENTITIES = 81;
+  CMD_MSET_DOCUMENTS = 82;
+  CMD_MGET_DOCUMENTS = 83;
+  CMD_MSET_TEXTUNITS = 84;
+  CMD_MGET_TEXTUNITS = 85;
+  CMD_MSET_RELATIONSHIPS = 86;
+  CMD_MGET_RELATIONSHIPS = 87;
+  CMD_ENTITIES_RESPONSE = 88;
+  CMD_DOCUMENTS_RESPONSE = 89;
+  CMD_TEXTUNITS_RESPONSE = 90;
+  CMD_RELATIONSHIPS_RESPONSE = 91;
+  
+  // Pipeline (100-109)
+  CMD_PIPELINE = 100;
+  CMD_PIPELINE_RESPONSE = 101;
+  
+  // Backup/Persistence (110-119)
+  CMD_BGSAVE = 110;
+  CMD_SAVE = 111;
+  CMD_LASTSAVE = 112;
+  CMD_BGRESTORE = 113;
+  CMD_BACKUP_STATUS = 114;
+  CMD_WAL_CHECKPOINT = 115;
+  CMD_WAL_TRUNCATE = 116;
+  CMD_WAL_ROTATE = 117;
+  CMD_WAL_STATUS = 118;
+  CMD_BACKUP_RESPONSE = 119;
+  
+  // Auth (120-129)
+  CMD_AUTH = 120;
+  CMD_AUTH_RESPONSE = 121;
+}
+
+// =============================================================================
+// BASIC TYPES
+// =============================================================================
+
+message Empty {}
+
+message Error {
+  string message = 1;
+  int32 code = 2;
+}
+
+message OkWithID {
+  uint64 id = 1;
+}
+
+// =============================================================================
+// INFO
+// =============================================================================
+
+message InfoResponse {
+  string version = 1;
+  uint64 document_count = 2;
+  uint64 textunit_count = 3;
+  uint64 entity_count = 4;
+  uint64 relationship_count = 5;
+  uint64 community_count = 6;
+  int32 vector_dim = 7;
+  int32 session_count = 8;        // number of active sessions
+}
+
+// =============================================================================
+// SESSION MANAGEMENT
+// =============================================================================
+
+message SessionInfo {
+  string session_id = 1;
+  int64 created_at = 2;
+  int64 last_access = 3;
+  int64 ttl = 4;                  // absolute TTL in seconds (0 = no expiry)
+  int64 idle_ttl = 5;             // idle TTL in seconds (0 = no idle expiry)
+  uint64 document_count = 6;
+  uint64 textunit_count = 7;
+  uint64 entity_count = 8;
+  uint64 relationship_count = 9;
+  uint64 community_count = 10;
+}
+
+message ListSessionsResponse {
+  repeated SessionInfo sessions = 1;
+}
+
+message DeleteSessionRequest {
+  string session_id = 1;
+}
+
+message SessionInfoRequest {
+  string session_id = 1;
+}
+
+message SetSessionTTLRequest {
+  string session_id = 1;
+  int64 ttl = 2;                  // absolute TTL in seconds
+  int64 idle_ttl = 3;             // idle TTL in seconds
+}
+
+message TouchSessionRequest {
+  string session_id = 1;
+}
+
+// =============================================================================
+// DOCUMENT - TTL removed (session-level only)
+// =============================================================================
+
+message Document {
+  uint64 id = 1;
+  string external_id = 2;
+  string filename = 3;
+  string status = 4;
+  repeated uint64 textunit_ids = 5;
+  int64 created_at = 6;
+}
+
+message AddDocumentRequest {
+  string external_id = 1;
+  string filename = 2;
+}
+
+// =============================================================================
+// TEXTUNIT - TTL removed (session-level only)
+// =============================================================================
+
+message TextUnit {
+  uint64 id = 1;
+  string external_id = 2;
+  uint64 document_id = 3;
+  string content = 4;
+  int32 token_count = 5;
+  repeated uint64 entity_ids = 6;
+  int64 created_at = 7;
+}
+
+message AddTextUnitRequest {
+  string external_id = 1;
+  uint64 document_id = 2;
+  string content = 3;
+  repeated float embedding = 4;
+  int32 token_count = 5;
+}
+
+// =============================================================================
+// ENTITY - TTL removed (session-level only)
+// =============================================================================
+
+message Entity {
+  uint64 id = 1;
+  string external_id = 2;
+  string title = 3;
+  string type = 4;
+  string description = 5;
+  repeated uint64 textunit_ids = 6;
+  int64 created_at = 7;
+}
+
+message AddEntityRequest {
+  string external_id = 1;
+  string title = 2;
+  string type = 3;
+  string description = 4;
+  repeated float embedding = 5;
+}
+
+message GetEntityByTitleRequest {
+  string title = 1;
+}
+
+message UpdateEntityDescRequest {
+  uint64 id = 1;
+  string description = 2;
+  repeated float embedding = 3;
+}
+
+// =============================================================================
+// RELATIONSHIP
+// =============================================================================
+
+message Relationship {
+  uint64 id = 1;
+  string external_id = 2;
+  uint64 source_id = 3;
+  uint64 target_id = 4;
+  string type = 5;
+  string description = 6;
+  float weight = 7;
+  int64 created_at = 8;
+}
+
+message AddRelationshipRequest {
+  string external_id = 1;
+  uint64 source_id = 2;
+  uint64 target_id = 3;
+  string type = 4;
+  string description = 5;
+  float weight = 6;
+}
+
+// =============================================================================
+// COMMUNITY - TTL removed (session-level only)
+// =============================================================================
+
+message Community {
+  uint64 id = 1;
+  string external_id = 2;
+  string title = 3;
+  string summary = 4;
+  string full_content = 5;
+  int32 level = 6;
+  repeated uint64 entity_ids = 7;
+  repeated uint64 relationship_ids = 8;
+  int64 created_at = 9;
+}
+
+message AddCommunityRequest {
+  string external_id = 1;
+  string title = 2;
+  string summary = 3;
+  string full_content = 4;
+  int32 level = 5;
+  repeated uint64 entity_ids = 6;
+  repeated uint64 relationship_ids = 7;
+  repeated float embedding = 8;
+}
+
+message ComputeCommunitiesRequest {
+  double resolution = 1;
+  int32 iterations = 2;
+}
+
+message ComputeCommunitiesResponse {
+  int32 count = 1;
+  repeated Community communities = 2;
+}
+
+// =============================================================================
+// LINK
+// =============================================================================
+
+message LinkTextUnitEntityRequest {
+  uint64 textunit_id = 1;
+  uint64 entity_id = 2;
+}
+
+// =============================================================================
+// QUERY
+// =============================================================================
+
+message QueryRequest {
+  repeated float query_vector = 1;
+  repeated string search_types = 2;  // "textunit", "entity", "community"
+  int32 top_k = 3;
+  int32 k_hops = 4;
+  int32 max_entities = 5;
+  int32 max_textunits = 6;
+  int32 max_communities = 7;
+  repeated uint64 seed_entity_ids = 8;
+  repeated string filter_entity_types = 9;
+  repeated string filter_rel_types = 10;
+}
+
+message TextUnitResult {
+  TextUnit textunit = 1;
+  float similarity = 2;
+  int32 hop = 3;
+}
+
+message EntityResult {
+  Entity entity = 1;
+  float similarity = 2;
+  int32 hop = 3;
+}
+
+message CommunityResult {
+  Community community = 1;
+  float similarity = 2;
+}
+
+message RelationshipResult {
+  Relationship relationship = 1;
+  string source_title = 2;
+  string target_title = 3;
+}
+
+message QueryStats {
+  int64 duration_micros = 1;
+  int32 vector_searches = 2;
+  int32 graph_traversals = 3;
+}
+
+message QueryResponse {
+  uint64 query_id = 1;
+  repeated TextUnitResult textunits = 2;
+  repeated EntityResult entities = 3;
+  repeated CommunityResult communities = 4;
+  repeated RelationshipResult relationships = 5;
+  QueryStats stats = 6;
+}
+
+// =============================================================================
+// EXPLAIN
+// =============================================================================
+
+message ExplainRequest {
+  uint64 query_id = 1;
+}
+
+message SeedInfo {
+  string type = 1;
+  uint64 id = 2;
+  string external_id = 3;
+  float similarity = 4;
+}
+
+message TraversalStep {
+  uint64 from_entity_id = 1;
+  uint64 to_entity_id = 2;
+  uint64 relationship_id = 3;
+  string rel_type = 4;
+  float weight = 5;
+  int32 hop = 6;
+}
+
+message ExplainResponse {
+  uint64 query_id = 1;
+  repeated SeedInfo seeds = 2;
+  repeated TraversalStep traversal = 3;
+}
+
+// =============================================================================
+// GET BY ID (Generic)
+// =============================================================================
+
+message GetByIDRequest {
+  uint64 id = 1;
+}
+
+message DeleteByIDRequest {
+  uint64 id = 1;
+}
+
+// =============================================================================
+// HEALTH
+// =============================================================================
+
+message HealthResponse {
+  string status = 1;  // "ok", "degraded", "error"
+  map<string, string> components = 2;
+}
+
+// =============================================================================
+// BULK OPERATIONS - TTL removed from requests
+// =============================================================================
+
+message MSetEntitiesRequest {
+  repeated AddEntityRequest entities = 1;
+}
+
+message MGetEntitiesRequest {
+  repeated uint64 ids = 1;
+}
+
+message EntitiesResponse {
+  repeated Entity entities = 1;
+  repeated uint64 created_ids = 2;  // for MSET responses
+}
+
+message MSetDocumentsRequest {
+  repeated AddDocumentRequest documents = 1;
+}
+
+message MGetDocumentsRequest {
+  repeated uint64 ids = 1;
+}
+
+message DocumentsResponse {
+  repeated Document documents = 1;
+  repeated uint64 created_ids = 2;
+}
+
+message MSetTextUnitsRequest {
+  repeated AddTextUnitRequest textunits = 1;
+}
+
+message MGetTextUnitsRequest {
+  repeated uint64 ids = 1;
+}
+
+message TextUnitsResponse {
+  repeated TextUnit textunits = 1;
+  repeated uint64 created_ids = 2;
+}
+
+message MSetRelationshipsRequest {
+  repeated AddRelationshipRequest relationships = 1;
+}
+
+message MGetRelationshipsRequest {
+  repeated uint64 ids = 1;
+}
+
+message RelationshipsResponse {
+  repeated Relationship relationships = 1;
+  repeated uint64 created_ids = 2;
+}
+
+// =============================================================================
+// PIPELINE
+// =============================================================================
+
+message PipelineRequest {
+  repeated Envelope commands = 1;
+}
+
+message PipelineResponse {
+  repeated Envelope responses = 1;
+}
+
+// =============================================================================
+// HIERARCHICAL LEIDEN
+// =============================================================================
+
+message HierarchicalLeidenRequest {
+  int32 max_levels = 1;
+  double resolution = 2;
+}
+
+message HierarchicalLeidenResponse {
+  map<int32, int32> level_counts = 1;  // level -> count
+  int32 total_communities = 2;
+}
+
+// =============================================================================
+// BACKUP / PERSISTENCE
+// =============================================================================
+
+message SaveRequest {
+  string path = 1;  // optional, uses default if empty
+}
+
+message RestoreRequest {
+  string path = 1;
+}
+
+message BackupStatusResponse {
+  bool in_progress = 1;
+  string type = 2;              // "save", "restore", ""
+  int64 start_time = 3;
+  int32 progress_percent = 4;
+  string error = 5;
+  int64 last_save_time = 6;
+  string last_save_path = 7;
+}
+
+message LastSaveResponse {
+  int64 timestamp = 1;
+  string path = 2;
+}
+
+message WALStatusResponse {
+  uint64 current_lsn = 1;
+  uint64 flushed_lsn = 2;
+  int32 segment_count = 3;
+  int64 total_size_bytes = 4;
+}
+
+message WALTruncateRequest {
+  uint64 target_lsn = 1;        // Truncate WAL entries before this LSN
+}
+
+// =============================================================================
+// AUTH
+// =============================================================================
+
+message AuthRequest {
+  string api_key = 1;
+}
+
+message AuthResponse {
+  bool success = 1;
+  string message = 2;
+  string key_id = 3;           // which key was used
+  repeated string permissions = 4;  // granted permissions
+}

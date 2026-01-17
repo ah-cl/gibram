@@ -1,0 +1,57 @@
+# Binaries
+gibram-server
+gibram-cli
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Logs
+*.log
+server.log
+
+# Test outputs
+coverage.out
+*.test
+*.out
+
+# Runtime data
+data/
+snapshots/
+wal/
+auto_cert.pem
+auto_key.pem
+*.gibram
+
+# User config
+config.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+venv/
+env/
+
+# Go
+vendor/
+
+# Protobuf generated files
+proto/*.pb.go
+!proto/gibrampb/

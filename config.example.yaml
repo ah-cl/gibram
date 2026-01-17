@@ -1,0 +1,51 @@
+# GibRAM Configuration File
+# Graph in-Buffer Retrieval & Associative Memory
+# Copy this to config.yaml and customize
+
+server:
+  addr: ":6161"
+  data_dir: "./data"
+  vector_dim: 1536
+
+tls:
+  # For production: provide cert and key files
+  cert_file: ""
+  key_file: ""
+  # For development: auto-generate self-signed cert
+  auto_cert: true
+
+auth:
+  keys:
+    # Admin key - full access
+    - id: "admin"
+      key: "gibram_admin_change_me_in_production"
+      permissions: ["admin"]
+    
+    # Application key - read/write access
+    - id: "app-service"
+      key: "gibram_app_change_me_in_production"
+      permissions: ["write"]
+    
+    # Read-only key
+    - id: "query-service"
+      key: "gibram_query_change_me_in_production"
+      permissions: ["read"]
+
+security:
+  # Max frame size (4MB default)
+  max_frame_size: 4194304
+  
+  # Rate limiting per API key
+  rate_limit: 1000  # requests per second
+  rate_burst: 100   # burst allowance
+  
+  # Connection timeouts
+  idle_timeout: 300s      # idle connection timeout
+  unauth_timeout: 10s     # timeout for unauthenticated connections
+  max_conns_per_ip: 50    # max connections per IP
+
+logging:
+  level: "info"    # debug, info, warn, error
+  format: "text"   # json, text
+  output: "stdout" # stdout, file
+  file: ""         # log file path if output=file

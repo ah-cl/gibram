@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            goos: linux
+            goarch: amd64
+          - os: linux
+            arch: arm64
+            goos: linux
+            goarch: arm64
+          - os: darwin
+            arch: amd64
+            goos: darwin
+            goarch: amd64
+          - os: darwin
+            arch: arm64
+            goos: darwin
+            goarch: arm64
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" \
+            -o gibram-server ./cmd/server
+      
+      - name: Create archive
+        run: |
+          tar -czf gibram-${{ matrix.os }}-${{ matrix.arch }}.tar.gz gibram-server
+          sha256sum gibram-${{ matrix.os }}-${{ matrix.arch }}.tar.gz > gibram-${{ matrix.os }}-${{ matrix.arch }}.tar.gz.sha256
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gibram-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            gibram-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+            gibram-${{ matrix.os }}-${{ matrix.arch }}.tar.gz.sha256
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -name "*.tar.gz" -exec cp {} release/ \;
+          find artifacts -name "*.sha256" -exec cp {} release/ \;
+          ls -lh release/
+      
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release_notes.md << 'EOF'
+          ## GibRAM ${{ github.ref_name }}
+          
+          ### Installation
+          
+          **Quick install (Linux/macOS):**
+          ```bash
+          curl -fsSL https://gibram.io/install.sh | sh
+          ```
+          
+          **Manual download:**
+          Download the binary for your platform below, extract and run.
+          
+          ### Supported Platforms
+          - Linux (amd64, arm64)
+          - macOS (amd64, arm64)
+          
+          ### Checksums
+          SHA256 checksums are provided for verification.
+          
+          ### Python SDK
+          ```bash
+          pip install gibram
+          ```
+          
+          ### Documentation
+          - [GitHub Repository](https://github.com/gibram-io/gibram)
+          - [Knowledge Base](https://github.com/gibram-io/gibram/tree/main/docs)
+          EOF
+          
+          echo "notes_file=release_notes.md" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
