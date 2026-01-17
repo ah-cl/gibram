@@ -2,37 +2,13 @@
 
 **Graph in-Buffer Retrieval & Associative Memory**
 
-High-performance in-memory knowledge graph server designed for GraphRAG applications. GibRAM combines graph-based retrieval with vector search to enable fast, context-aware question answering over large document collections.
+GibRAM is an in memory knowledge graph server designed for retrieval augmented generation (RAG) workflows. It combines a lightweight graph store with vector search so that related pieces of information remain connected in memory. This makes it easier to retrieve related regulations, articles or other text when a query mentions specific subjects.
 
-Built for applications that need to extract knowledge from unstructured text, understand relationships between entities, and answer complex queries that require both semantic similarity and graph traversal.
-
-## Features
-
-### 🗄️ **Rich Graph Storage**
-- **Entities**: Named entities with types, descriptions, and embeddings
-- **Relationships**: Typed, weighted connections between entities  
-- **Communities**: Auto-detected entity clusters via Leiden algorithm
-- **Text Units**: Document chunks linked to extracted entities
-- **TTL-based eviction**: Automatic cleanup with configurable session lifetime
-
-### 🚀 **High-Performance Vector Search**
-- **HNSW indexing** for sub-millisecond semantic search across 100K+ vectors
-- Concurrent query execution with sub-2ms P50 latency
-- Automatic index building with configurable parameters (M, efConstruction)
-- Support for 1-5M entities per session with efficient memory management
-
-### ⚡ **Low-Latency Binary Protocol**
-- Custom Protobuf-based protocol (codec 0x01) for minimal overhead
-- 3x faster than JSON, 50% smaller payload size
-- Frame-based message format with length prefixing
-- Support for batch operations and streaming responses
-
-### 🐍 **Python SDK with Automatic Extraction**
-- **GraphRAG-style workflow**: Index documents with one function call
-- **OpenAI GPT-4 integration**: Automatic entity and relationship extraction
-- **Pluggable architecture**: Swap chunkers, extractors, or embedders
-- **Type-safe API**: Full type hints and dataclass-based responses
-- **Error handling**: Automatic retries with exponential backoff
+## Why GibRAM?
+- In memory and Ephemeral: Data lives in RAM with a configurable time to live. It is meant for short lived analysis and exploration rather than persistent storage.
+- Graph and Vectors Together: Stores named entities, relationships and document chunks alongside their embeddings in the same structure.
+- Graph aware Retrieval: Supports traversal over entities and relations as well as semantic search, helping you pull in context that would be missed by vector similarity alone.
+- Python SDK: Provides a GraphRAG style workflow for indexing documents and running queries with minimal code. Components such as chunker, extractor and embedder can be swapped out.
 
 ## Quick Start
 
