@@ -132,7 +132,12 @@ create_config() {
   write_timeout: 30s
 
 tls:
-  auto_cert: true
+  # PRODUCTION: Set cert_file and key_file, set auto_cert to false
+  # DEVELOPMENT: Keep auto_cert true (generates self-signed cert)
+  # Generate custom cert: sh <(curl -fsSL https://gibram.io/generate-cert.sh)
+  auto_cert: false
+  cert_file: \"\"
+  key_file: \"\"
 
 engine:
   default_session_ttl: 3600
@@ -237,7 +242,10 @@ print_success() {
     echo ""
     info "Quick start:"
     info "  1. Edit config: ${YELLOW}sudo nano $CONFIG_DIR/config.yaml${NC}"
-    info "  2. Start server: ${YELLOW}gibram-server --config $CONFIG_DIR/config.yaml${NC}"
+    info "  2. Generate TLS cert (recommended): ${YELLOW}sh <(curl -fsSL https://gibram.io/generate-cert.sh)${NC}"
+    info "  3. Start server: ${YELLOW}gibram-server --config $CONFIG_DIR/config.yaml${NC}"
+    info ""
+    info "Or start insecure (DEV ONLY): ${YELLOW}gibram-server --config $CONFIG_DIR/config.yaml --insecure${NC}"
     echo ""
     info "Documentation: https://github.com/$REPO"
     info "Python SDK: ${YELLOW}pip install gibram${NC}"

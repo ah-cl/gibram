@@ -8,11 +8,21 @@ server:
   vector_dim: 1536
 
 tls:
-  # For production: provide cert and key files
-  cert_file: ""
-  key_file: ""
-  # For development: auto-generate self-signed cert
+  # PRODUCTION: Use custom certificates (recommended)
+  # Generate with: openssl req -x509 -newkey rsa:4096 -nodes \
+  #   -keyout /etc/gibram/certs/server.key \
+  #   -out /etc/gibram/certs/server.crt \
+  #   -days 365 -subj "/CN=yourdomain.com"
+  # Or use Let's Encrypt with certbot
+  cert_file: ""  # Path to certificate file (e.g., /etc/gibram/certs/server.crt)
+  key_file: ""   # Path to private key file (e.g., /etc/gibram/certs/server.key)
+  
+  # DEVELOPMENT ONLY: Auto-generate self-signed certificate
+  # WARNING: Not secure for production! Clients must skip certificate verification.
   auto_cert: true
+  
+  # INSECURE MODE (DEV ONLY): Start server with --insecure flag to disable TLS entirely
+  # DO NOT USE IN PRODUCTION
 
 auth:
   keys:

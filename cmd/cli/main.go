@@ -18,6 +18,9 @@ import (
 
 func main() {
 	host := flag.String("h", "localhost:6161", "Server address")
+	useTLS := flag.Bool("tls", true, "Use TLS (default: true)")
+	skipVerify := flag.Bool("insecure", true, "Skip TLS certificate verification (default: true for self-signed)")
+	apiKey := flag.String("key", "", "API key for authentication")
 	flag.Parse()
 
 	fmt.Println("╔═══════════════════════════════════════╗")
@@ -26,8 +29,13 @@ func main() {
 	fmt.Println("╚═══════════════════════════════════════╝")
 	fmt.Println()
 
-	// Connect
-	c, err := client.NewClient(*host, "cli-session")
+	// Connect with TLS config
+	config := client.DefaultPoolConfig()
+	config.TLSEnabled = *useTLS
+	config.TLSSkipVerify = *skipVerify
+	config.APIKey = *apiKey
+	
+	c, err := client.NewClientWithConfig(*host, "cli-session", config)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
