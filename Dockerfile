@@ -37,7 +37,7 @@ COPY --from=builder /build/gibram-server /usr/local/bin/gibram-server
 RUN chmod +x /usr/local/bin/gibram-server
 
 # Copy default config
-COPY config.example.yaml /etc/gibram/config.yaml.example
+COPY config.example.yaml /etc/gibram/config.yaml
 
 # Switch to non-root user
 USER gibram
