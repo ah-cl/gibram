@@ -85,13 +85,14 @@ type pooledConn struct {
 
 // ConnPool manages a pool of connections
 type ConnPool struct {
-	mu          sync.Mutex
-	addr        string
-	config      PoolConfig
-	connections []*pooledConn
-	available   chan *pooledConn
-	closed      int32 // atomic
-	activeCount int32 // atomic
+	mu             sync.Mutex
+	addr           string
+	config         PoolConfig
+	connections    []*pooledConn
+	available      chan *pooledConn
+	closed         int32 // atomic
+	activeCount    int32 // atomic
+	availableCount int32 // atomic
 }
 
 // NewConnPool creates a new connection pool
@@ -238,7 +239,11 @@ func (p *ConnPool) getConn() (*pooledConn, error) {
 
 	// Try to get from available pool (non-blocking)
 	select {
-	case pc := <-p.available:
+	case pc, ok := <-p.available:
+		if !ok {
+			return nil, ErrPoolClosed
+		}
+		atomic.AddInt32(&p.availableCount, -1)
 		if pc != nil && time.Since(time.Unix(0, pc.lastUsed.Load())) < p.config.IdleTimeout {
 			pc.inUse.Store(true)
 			return pc, nil
@@ -257,7 +262,11 @@ func (p *ConnPool) getConn() (*pooledConn, error) {
 
 	// Wait for available connection with timeout
 	select {
-	case pc := <-p.available:
+	case pc, ok := <-p.available:
+		if !ok {
+			return nil, ErrPoolClosed
+		}
+		atomic.AddInt32(&p.availableCount, -1)
 		if pc != nil {
 			pc.inUse.Store(true)
 			return pc, nil
@@ -281,6 +290,7 @@ func (p *ConnPool) putConn(pc *pooledConn) {
 
 	select {
 	case p.available <- pc:
+		atomic.AddInt32(&p.availableCount, 1)
 		return
 	default:
 		p.closeConn(pc)
@@ -319,7 +329,11 @@ func (p *ConnPool) cleanIdleConnections() {
 
 		for {
 			select {
-			case pc := <-p.available:
+			case pc, ok := <-p.available:
+				if !ok {
+					return
+				}
+				atomic.AddInt32(&p.availableCount, -1)
 				if pc == nil {
 					continue
 				}
@@ -341,6 +355,7 @@ func (p *ConnPool) cleanIdleConnections() {
 		for _, pc := range toReturn {
 			select {
 			case p.available <- pc:
+				atomic.AddInt32(&p.availableCount, 1)
 				continue
 			default:
 				p.closeConn(pc)
@@ -356,6 +371,7 @@ func (p *ConnPool) Close() {
 	}
 
 	close(p.available)
+	atomic.StoreInt32(&p.availableCount, 0)
 
 	p.mu.Lock()
 	for _, pc := range p.connections {
@@ -369,7 +385,7 @@ func (p *ConnPool) Close() {
 
 // Stats returns pool statistics
 func (p *ConnPool) Stats() (active, available int) {
-	return int(atomic.LoadInt32(&p.activeCount)), len(p.available)
+	return int(atomic.LoadInt32(&p.activeCount)), int(atomic.LoadInt32(&p.availableCount))
 }
 
 // =============================================================================

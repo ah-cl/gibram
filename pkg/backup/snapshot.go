@@ -56,7 +56,9 @@ func NewSnapshotWriter(path string, header *SnapshotHeader) (*SnapshotWriter, er
 	// Write header (uncompressed)
 	if err := binary.Write(f, binary.BigEndian, header); err != nil {
 		if closeErr := f.Close(); closeErr != nil {
-			_ = os.Remove(tmpPath)
+			if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				return nil, fmt.Errorf("write snapshot header failed: %v (close failed: %v, cleanup failed: %v)", err, closeErr, rmErr)
+			}
 			return nil, fmt.Errorf("write snapshot header failed: %v (close failed: %v)", err, closeErr)
 		}
 		if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
@@ -114,7 +116,9 @@ func (w *SnapshotWriter) WriteSection(name string, data []byte) error {
 func (w *SnapshotWriter) Close() error {
 	if err := w.gzWriter.Close(); err != nil {
 		if closeErr := w.file.Close(); closeErr != nil {
-			_ = os.Remove(w.tmpPath)
+			if rmErr := os.Remove(w.tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				return fmt.Errorf("gzip close failed: %v (file close failed: %v, cleanup failed: %v)", err, closeErr, rmErr)
+			}
 			return fmt.Errorf("gzip close failed: %v (file close failed: %v)", err, closeErr)
 		}
 		if rmErr := os.Remove(w.tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
@@ -257,7 +261,9 @@ func CreateSnapshot(path string, lsn uint64, writeFunc func(w *SnapshotWriter) e
 
 	if err := writeFunc(writer); err != nil {
 		if closeErr := writer.Close(); closeErr != nil {
-			_ = os.Remove(path)
+			if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+				return fmt.Errorf("snapshot write failed: %v (close failed: %v, cleanup failed: %v)", err, closeErr, rmErr)
+			}
 			return fmt.Errorf("snapshot write failed: %v (close failed: %v)", err, closeErr)
 		}
 		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
