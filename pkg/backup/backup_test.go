@@ -74,7 +74,11 @@ func TestSnapshotWriter_Create(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSnapshotWriter() error: %v", err)
 	}
-	defer writer.Close()
+	defer func() {
+		if err := writer.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	if writer.file == nil {
 		t.Error("Writer file should not be nil")
@@ -146,7 +150,10 @@ func TestSnapshotWriter_BytesWritten(t *testing.T) {
 	path := filepath.Join(tmpDir, "test.snap")
 
 	header := &SnapshotHeader{Version: 1}
-	writer, _ := NewSnapshotWriter(path, header)
+	writer, err := NewSnapshotWriter(path, header)
+	if err != nil {
+		t.Fatalf("NewSnapshotWriter() error: %v", err)
+	}
 
 	// Initial bytes written should be 0
 	if writer.BytesWritten() != 0 {
@@ -154,12 +161,16 @@ func TestSnapshotWriter_BytesWritten(t *testing.T) {
 	}
 
 	// Write some data
-	writer.Write([]byte("test data"))
+	if _, err := writer.Write([]byte("test data")); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
 	if writer.BytesWritten() <= 0 {
 		t.Error("BytesWritten() should be > 0 after write")
 	}
 
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 }
 
 func TestSnapshotWriter_CreateInvalidPath(t *testing.T) {
@@ -181,28 +192,42 @@ func TestSnapshotReader_Open(t *testing.T) {
 	path := filepath.Join(tmpDir, "test.snap")
 
 	// Write a valid snapshot file manually
-	f, _ := os.Create(path)
-	defer f.Close()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
 
 	// Write header with correct magic 'GRAM'
 	header := &SnapshotHeader{
 		Magic:   [4]byte{'G', 'R', 'A', 'M'},
 		Version: 1,
 	}
-	binary.Write(f, binary.BigEndian, header)
+	if err := binary.Write(f, binary.BigEndian, header); err != nil {
+		t.Fatalf("binary.Write() error: %v", err)
+	}
 
 	// Write gzipped content
 	gw := gzip.NewWriter(f)
-	gw.Write([]byte("test"))
-	gw.Close()
-	f.Close()
+	if _, err := gw.Write([]byte("test")); err != nil {
+		t.Fatalf("gzip write error: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("gzip close error: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("file close error: %v", err)
+	}
 
 	// Try to open
 	reader, err := NewSnapshotReader(path)
 	if err != nil {
 		t.Fatalf("NewSnapshotReader() error: %v", err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	if reader.Header() == nil {
 		t.Error("Header() should not be nil")
@@ -214,15 +239,22 @@ func TestSnapshotReader_InvalidMagic(t *testing.T) {
 	path := filepath.Join(tmpDir, "bad.snap")
 
 	// Write invalid magic
-	f, _ := os.Create(path)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
 	header := &SnapshotHeader{
 		Magic:   [4]byte{'B', 'A', 'D', '!'},
 		Version: 1,
 	}
-	binary.Write(f, binary.BigEndian, header)
-	f.Close()
+	if err := binary.Write(f, binary.BigEndian, header); err != nil {
+		t.Fatalf("binary.Write() error: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("file close error: %v", err)
+	}
 
-	_, err := NewSnapshotReader(path)
+	_, err = NewSnapshotReader(path)
 	if err == nil {
 		t.Error("Expected error for invalid magic")
 	}
@@ -240,25 +272,41 @@ func TestSnapshotReader_Close(t *testing.T) {
 	path := filepath.Join(tmpDir, "test.snap")
 
 	// Create valid snapshot with magic 'GRAM'
-	f, _ := os.Create(path)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
 	header := &SnapshotHeader{Magic: [4]byte{'G', 'R', 'A', 'M'}, Version: 1}
-	binary.Write(f, binary.BigEndian, header)
+	if err := binary.Write(f, binary.BigEndian, header); err != nil {
+		t.Fatalf("binary.Write() error: %v", err)
+	}
 	gw := gzip.NewWriter(f)
-	gw.Write([]byte("test"))
-	gw.Close()
-	f.Close()
+	if _, err := gw.Write([]byte("test")); err != nil {
+		t.Fatalf("gzip write error: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("gzip close error: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("file close error: %v", err)
+	}
 
-	reader, _ := NewSnapshotReader(path)
+	reader, err := NewSnapshotReader(path)
+	if err != nil {
+		t.Fatalf("NewSnapshotReader() error: %v", err)
+	}
 	
 	// Close should not error
-	err := reader.Close()
+	err = reader.Close()
 	if err != nil {
 		t.Errorf("Close() error: %v", err)
 	}
 
 	// Double close should also work
-	err = reader.Close()
-	// May or may not error on double close, just shouldn't panic
+	if err := reader.Close(); err != nil {
+		// May or may not error on double close, just shouldn't panic
+		t.Logf("Second close returned error: %v", err)
+	}
 }
 
 // =============================================================================
@@ -337,8 +385,12 @@ func TestSnapshotWriteRead_Roundtrip(t *testing.T) {
 	}
 
 	testData := []byte("GibRAM snapshot data")
-	writer.Write(testData)
-	writer.Close()
+	if _, err := writer.Write(testData); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 
 	// Verify file was created
 	stat, err := os.Stat(path)
@@ -383,8 +435,15 @@ func TestSnapshotWriter_LargeWrite(t *testing.T) {
 	path := filepath.Join(tmpDir, "large.snap")
 
 	header := &SnapshotHeader{Version: 1}
-	writer, _ := NewSnapshotWriter(path, header)
-	defer writer.Close()
+	writer, err := NewSnapshotWriter(path, header)
+	if err != nil {
+		t.Fatalf("NewSnapshotWriter() error: %v", err)
+	}
+	defer func() {
+		if err := writer.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	// Write 1MB of data
 	largeData := make([]byte, 1024*1024)
@@ -406,7 +465,10 @@ func TestSnapshotWriter_MultipleSections(t *testing.T) {
 	path := filepath.Join(tmpDir, "sections.snap")
 
 	header := &SnapshotHeader{Version: 1}
-	writer, _ := NewSnapshotWriter(path, header)
+	writer, err := NewSnapshotWriter(path, header)
+	if err != nil {
+		t.Fatalf("NewSnapshotWriter() error: %v", err)
+	}
 
 	sections := []struct {
 		name string
@@ -424,7 +486,9 @@ func TestSnapshotWriter_MultipleSections(t *testing.T) {
 		}
 	}
 
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 
 	// Check that bytes were written
 	if writer.BytesWritten() == 0 {
@@ -441,11 +505,16 @@ func TestSnapshotWriter_WriteAfterClose(t *testing.T) {
 	path := filepath.Join(tmpDir, "test.snap")
 
 	header := &SnapshotHeader{Version: 1}
-	writer, _ := NewSnapshotWriter(path, header)
-	writer.Close()
+	writer, err := NewSnapshotWriter(path, header)
+	if err != nil {
+		t.Fatalf("NewSnapshotWriter() error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 
 	// Writing after close should error
-	_, err := writer.Write([]byte("test"))
+	_, err = writer.Write([]byte("test"))
 	if err == nil {
 		t.Log("Note: Write after close may not error immediately due to buffering")
 	}
@@ -460,7 +529,10 @@ func TestSnapshotWriter_ChecksumUpdates(t *testing.T) {
 	path := filepath.Join(tmpDir, "checksum.snap")
 
 	header := &SnapshotHeader{Version: 1}
-	writer, _ := NewSnapshotWriter(path, header)
+	writer, err := NewSnapshotWriter(path, header)
+	if err != nil {
+		t.Fatalf("NewSnapshotWriter() error: %v", err)
+	}
 
 	// Initial checksum is 0
 	if writer.checksum != 0 {
@@ -468,12 +540,16 @@ func TestSnapshotWriter_ChecksumUpdates(t *testing.T) {
 	}
 
 	// Write should update checksum
-	writer.Write([]byte("test data"))
+	if _, err := writer.Write([]byte("test data")); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
 	if writer.checksum == 0 {
 		t.Error("Checksum should update after write")
 	}
 
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 }
 
 // =============================================================================
@@ -487,11 +563,20 @@ func TestSnapshotWriter_ConcurrentWrites(t *testing.T) {
 	path := filepath.Join(tmpDir, "concurrent.snap")
 
 	header := &SnapshotHeader{Version: 1}
-	writer, _ := NewSnapshotWriter(path, header)
-	defer writer.Close()
+	writer, err := NewSnapshotWriter(path, header)
+	if err != nil {
+		t.Fatalf("NewSnapshotWriter() error: %v", err)
+	}
+	defer func() {
+		if err := writer.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	for i := 0; i < 100; i++ {
-		writer.Write([]byte("data chunk "))
+		if _, err := writer.Write([]byte("data chunk ")); err != nil {
+			t.Fatalf("Write() error: %v", err)
+		}
 	}
 }
 
@@ -504,15 +589,25 @@ func TestSnapshotWriter_GzipCompression(t *testing.T) {
 	path := filepath.Join(tmpDir, "compressed.snap")
 
 	header := &SnapshotHeader{Version: 1}
-	writer, _ := NewSnapshotWriter(path, header)
+	writer, err := NewSnapshotWriter(path, header)
+	if err != nil {
+		t.Fatalf("NewSnapshotWriter() error: %v", err)
+	}
 
 	// Write repetitive data (highly compressible)
 	repetitive := bytes.Repeat([]byte("AAAA"), 10000)
-	writer.Write(repetitive)
-	writer.Close()
+	if _, err := writer.Write(repetitive); err != nil {
+		t.Fatalf("Write() error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 
 	// File should be smaller than data due to compression
-	stat, _ := os.Stat(path)
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error: %v", err)
+	}
 	if stat.Size() >= int64(len(repetitive)) {
 		t.Log("File may include header overhead, compression still applies to content")
 	}
@@ -530,7 +625,11 @@ func TestWAL_Create(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL() error: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	if wal == nil {
 		t.Fatal("WAL should not be nil")
@@ -555,7 +654,11 @@ func TestWAL_Append(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL() error: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	// Append an entry
 	lsn, err := wal.Append(EntryInsert, "entity:1", []byte(`{"id": 1, "title": "Test"}`))
@@ -572,8 +675,15 @@ func TestWAL_MultipleAppends(t *testing.T) {
 	tmpDir := t.TempDir()
 	walDir := filepath.Join(tmpDir, "wal")
 
-	wal, _ := NewWAL(walDir, SyncPeriodic)
-	defer wal.Close()
+	wal, err := NewWAL(walDir, SyncPeriodic)
+	if err != nil {
+		t.Fatalf("NewWAL() error: %v", err)
+	}
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	var lastLSN uint64
 	for i := 0; i < 100; i++ {
@@ -592,15 +702,26 @@ func TestWAL_Sync(t *testing.T) {
 	tmpDir := t.TempDir()
 	walDir := filepath.Join(tmpDir, "wal")
 
-	wal, _ := NewWAL(walDir, SyncNever)
-	defer wal.Close()
+	wal, err := NewWAL(walDir, SyncNever)
+	if err != nil {
+		t.Fatalf("NewWAL() error: %v", err)
+	}
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	// Append some entries
-	wal.Append(EntryInsert, "k1", []byte("v1"))
-	wal.Append(EntryInsert, "k2", []byte("v2"))
+	if _, err := wal.Append(EntryInsert, "k1", []byte("v1")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
+	if _, err := wal.Append(EntryInsert, "k2", []byte("v2")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
 
 	// Force sync
-	err := wal.Sync()
+	err = wal.Sync()
 	if err != nil {
 		t.Errorf("Sync() error: %v", err)
 	}
@@ -610,10 +731,15 @@ func TestWAL_Close(t *testing.T) {
 	tmpDir := t.TempDir()
 	walDir := filepath.Join(tmpDir, "wal")
 
-	wal, _ := NewWAL(walDir, SyncPeriodic)
-	wal.Append(EntryInsert, "k1", []byte("v1"))
+	wal, err := NewWAL(walDir, SyncPeriodic)
+	if err != nil {
+		t.Fatalf("NewWAL() error: %v", err)
+	}
+	if _, err := wal.Append(EntryInsert, "k1", []byte("v1")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
 
-	err := wal.Close()
+	err = wal.Close()
 	if err != nil {
 		t.Errorf("Close() error: %v", err)
 	}
@@ -722,14 +848,24 @@ func TestWAL_CurrentLSN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL() error: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	initialLSN := wal.CurrentLSN()
 	
 	// Append entries
-	wal.Append(EntryInsert, "k1", []byte("v1"))
-	wal.Append(EntryInsert, "k2", []byte("v2"))
-	wal.Append(EntryInsert, "k3", []byte("v3"))
+	if _, err := wal.Append(EntryInsert, "k1", []byte("v1")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
+	if _, err := wal.Append(EntryInsert, "k2", []byte("v2")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
+	if _, err := wal.Append(EntryInsert, "k3", []byte("v3")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
 	
 	// LSN should have increased
 	newLSN := wal.CurrentLSN()
@@ -747,10 +883,18 @@ func TestWAL_FlushedLSN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL() error: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
-	wal.Append(EntryInsert, "k1", []byte("v1"))
-	wal.Append(EntryInsert, "k2", []byte("v2"))
+	if _, err := wal.Append(EntryInsert, "k1", []byte("v1")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
+	if _, err := wal.Append(EntryInsert, "k2", []byte("v2")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
 	
 	// With SyncEveryWrite, flushedLSN should equal currentLSN
 	if wal.FlushedLSN() != wal.CurrentLSN() {
@@ -767,7 +911,11 @@ func TestWAL_SegmentCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL() error: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	// Initial segment count should be 1
 	if wal.SegmentCount() != 1 {
@@ -783,13 +931,21 @@ func TestWAL_TotalSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL() error: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	// Write some data
 	for i := 0; i < 10; i++ {
-		wal.Append(EntryInsert, "key", []byte("some value data"))
+		if _, err := wal.Append(EntryInsert, "key", []byte("some value data")); err != nil {
+			t.Fatalf("Append() error: %v", err)
+		}
 	}
-	wal.Sync()
+	if err := wal.Sync(); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
 
 	size := wal.TotalSize()
 	if size <= 0 {
@@ -807,15 +963,33 @@ func TestWAL_TruncateBefore(t *testing.T) {
 	}
 
 	// Append entries
-	wal.Append(EntryInsert, "k1", []byte("v1"))
-	wal.Append(EntryInsert, "k2", []byte("v2"))
-	lsn3, _ := wal.Append(EntryInsert, "k3", []byte("v3"))
-	wal.Sync()
-	wal.Close()
+	if _, err := wal.Append(EntryInsert, "k1", []byte("v1")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
+	if _, err := wal.Append(EntryInsert, "k2", []byte("v2")); err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
+	lsn3, err := wal.Append(EntryInsert, "k3", []byte("v3"))
+	if err != nil {
+		t.Fatalf("Append() error: %v", err)
+	}
+	if err := wal.Sync(); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 
 	// Re-open and truncate
-	wal2, _ := NewWAL(walDir, SyncPeriodic)
-	defer wal2.Close()
+	wal2, err := NewWAL(walDir, SyncPeriodic)
+	if err != nil {
+		t.Fatalf("NewWAL() error: %v", err)
+	}
+	defer func() {
+		if err := wal2.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	err = wal2.TruncateBefore(lsn3)
 	if err != nil {
@@ -831,7 +1005,11 @@ func TestWAL_Rotate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWAL() error: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
 	initialCount := wal.SegmentCount()
 	
@@ -873,10 +1051,12 @@ func TestWAL_SyncModes_Full(t *testing.T) {
 				t.Errorf("Append() error with %s: %v", tt.name, err)
 			}
 			
-			wal.Close()
-		})
+				if err := wal.Close(); err != nil {
+					t.Fatalf("Close() error: %v", err)
+				}
+			})
+		}
 	}
-}
 
 // =============================================================================
 // Archiver Tests
@@ -894,11 +1074,15 @@ func TestArchiver_New(t *testing.T) {
 func TestArchiver_Archive(t *testing.T) {
 	tmpDir := t.TempDir()
 	srcDir := filepath.Join(tmpDir, "src")
-	os.MkdirAll(srcDir, 0755)
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("MkdirAll() error: %v", err)
+	}
 
 	// Create test file
 	testFile := filepath.Join(srcDir, "test.txt")
-	os.WriteFile(testFile, []byte("test content"), 0644)
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
 
 	archiver := NewArchiver(srcDir)
 	
@@ -918,12 +1102,20 @@ func TestArchiver_Archive(t *testing.T) {
 func TestArchiver_ListArchives(t *testing.T) {
 	tmpDir := t.TempDir()
 	srcDir := filepath.Join(tmpDir, "src")
-	os.MkdirAll(srcDir, 0755)
-	os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("content"), 0644)
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("MkdirAll() error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("content"), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
 
 	archiver := NewArchiver(srcDir)
-	archiver.Archive(filepath.Join(tmpDir, "archive1.tar.gz"))
-	archiver.Archive(filepath.Join(tmpDir, "archive2.tar.gz"))
+	if err := archiver.Archive(filepath.Join(tmpDir, "archive1.tar.gz")); err != nil {
+		t.Fatalf("Archive() error: %v", err)
+	}
+	if err := archiver.Archive(filepath.Join(tmpDir, "archive2.tar.gz")); err != nil {
+		t.Fatalf("Archive() error: %v", err)
+	}
 
 	archives, err := ListArchives(tmpDir)
 	if err != nil {
@@ -938,14 +1130,20 @@ func TestArchiver_ListArchives(t *testing.T) {
 func TestArchiver_Extract(t *testing.T) {
 	tmpDir := t.TempDir()
 	srcDir := filepath.Join(tmpDir, "src")
-	os.MkdirAll(srcDir, 0755)
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("MkdirAll() error: %v", err)
+	}
 	
 	testContent := []byte("extract test content")
-	os.WriteFile(filepath.Join(srcDir, "test.txt"), testContent, 0644)
+	if err := os.WriteFile(filepath.Join(srcDir, "test.txt"), testContent, 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
 
 	archiver := NewArchiver(srcDir)
 	archivePath := filepath.Join(tmpDir, "test-extract.tar.gz")
-	archiver.Archive(archivePath)
+	if err := archiver.Archive(archivePath); err != nil {
+		t.Fatalf("Archive() error: %v", err)
+	}
 
 	// Extract
 	destDir := filepath.Join(tmpDir, "dest")
@@ -970,12 +1168,18 @@ func TestArchiver_Extract(t *testing.T) {
 func TestArchiver_VerifyArchive(t *testing.T) {
 	tmpDir := t.TempDir()
 	srcDir := filepath.Join(tmpDir, "src")
-	os.MkdirAll(srcDir, 0755)
-	os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("verify content"), 0644)
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("MkdirAll() error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("verify content"), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
 
 	archiver := NewArchiver(srcDir)
 	archivePath := filepath.Join(tmpDir, "test-verify.tar.gz")
-	archiver.Archive(archivePath)
+	if err := archiver.Archive(archivePath); err != nil {
+		t.Fatalf("Archive() error: %v", err)
+	}
 
 	// Verify
 	err := VerifyArchive(archivePath)
@@ -1023,7 +1227,9 @@ func TestRecovery_Cleanup(t *testing.T) {
 
 	// Create some temporary files
 	tmpFile := filepath.Join(tmpDir, "temp.tmp")
-	os.WriteFile(tmpFile, []byte("temp"), 0644)
+	if err := os.WriteFile(tmpFile, []byte("temp"), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
 
 	err := recovery.Cleanup(3, 7) // Keep 3 snapshots, 7 days of WAL
 	if err != nil {
@@ -1048,7 +1254,9 @@ func TestCopyFile(t *testing.T) {
 	// Create source file
 	srcPath := filepath.Join(tmpDir, "source.txt")
 	content := []byte("copy me")
-	os.WriteFile(srcPath, content, 0644)
+	if err := os.WriteFile(srcPath, content, 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
 
 	// Copy
 	dstPath := filepath.Join(tmpDir, "dest.txt")
@@ -1058,7 +1266,10 @@ func TestCopyFile(t *testing.T) {
 	}
 
 	// Verify copy
-	copied, _ := os.ReadFile(dstPath)
+	copied, err := os.ReadFile(dstPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
 	if !bytes.Equal(copied, content) {
 		t.Error("Copied content does not match")
 	}
@@ -1111,8 +1322,12 @@ func TestSnapshotReader_ReadSection(t *testing.T) {
 	path := filepath.Join(tmpDir, "section.snap")
 
 	err := CreateSnapshot(path, 100, func(w *SnapshotWriter) error {
-		w.WriteSection("entities", []byte(`[{"id":1}]`))
-		w.WriteSection("relationships", []byte(`[{"id":2}]`))
+		if err := w.WriteSection("entities", []byte(`[{"id":1}]`)); err != nil {
+			return err
+		}
+		if err := w.WriteSection("relationships", []byte(`[{"id":2}]`)); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -1124,10 +1339,20 @@ func TestSnapshotReader_ReadSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSnapshotReader() error: %v", err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+	}()
 
-	// Read sections - ReadSection may not be implemented
-	_, _, _ = reader.ReadSection()
+	// Read first section
+	name, _, err := reader.ReadSection()
+	if err != nil {
+		t.Fatalf("ReadSection() error: %v", err)
+	}
+	if name == "" {
+		t.Error("ReadSection() returned empty name")
+	}
 }
 
 func TestCreateSnapshot(t *testing.T) {
@@ -1136,7 +1361,9 @@ func TestCreateSnapshot(t *testing.T) {
 
 	// Test CreateSnapshot helper
 	err := CreateSnapshot(path, 100, func(w *SnapshotWriter) error {
-		w.WriteSection("test", []byte("test data"))
+		if err := w.WriteSection("test", []byte("test data")); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -1155,7 +1382,9 @@ func TestRestoreSnapshot(t *testing.T) {
 	path := filepath.Join(tmpDir, "restore.snap")
 
 	err := CreateSnapshot(path, 100, func(w *SnapshotWriter) error {
-		w.WriteSection("entities", []byte(`[{"id":1,"title":"Test"}]`))
+		if err := w.WriteSection("entities", []byte(`[{"id":1,"title":"Test"}]`)); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -1201,7 +1430,9 @@ func TestWAL_ReadEntries(t *testing.T) {
 	}
 
 	// Close WAL
-	wal.Close()
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 
 	// Read entries back
 	entries, err := ReadEntries(tmpDir, 0)
@@ -1240,7 +1471,9 @@ func TestWAL_ReadEntriesFromLSN(t *testing.T) {
 		}
 	}
 
-	wal.Close()
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 
 	// Read entries starting from LSN 3
 	entries, err := ReadEntries(tmpDir, 3)
@@ -1284,11 +1517,15 @@ func TestWAL_TruncateBefore_Multiple(t *testing.T) {
 
 	// Write many entries
 	for i := 0; i < 100; i++ {
-		wal.Append(EntryInsert, "key"+itoa(i), []byte("data"+itoa(i)))
+		if _, err := wal.Append(EntryInsert, "key"+itoa(i), []byte("data"+itoa(i))); err != nil {
+			t.Fatalf("Append() error: %v", err)
+		}
 	}
 
 	// Sync and get LSN
-	wal.Sync()
+	if err := wal.Sync(); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
 	lsn := wal.CurrentLSN()
 
 	// Truncate before current LSN
@@ -1297,7 +1534,9 @@ func TestWAL_TruncateBefore_Multiple(t *testing.T) {
 		t.Logf("TruncateBefore() result: %v", err)
 	}
 
-	wal.Close()
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
 }
 
 // =============================================================================
@@ -1313,7 +1552,9 @@ func TestCopyFile_LargeFile(t *testing.T) {
 	for i := range data {
 		data[i] = byte(i % 256)
 	}
-	os.WriteFile(srcPath, data, 0644)
+	if err := os.WriteFile(srcPath, data, 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
 
 	dstPath := filepath.Join(tmpDir, "large_copy.dat")
 	err := CopyFile(srcPath, dstPath)

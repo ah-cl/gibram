@@ -77,21 +77,22 @@ func DefaultPoolConfig() PoolConfig {
 type pooledConn struct {
 	conn          net.Conn
 	reader        *bufio.Reader
-	lastUsed      time.Time
-	inUse         bool
+	lastUsed      atomic.Int64
+	inUse         atomic.Bool
 	authenticated bool
 	requestID     atomic.Uint64
 }
 
 // ConnPool manages a pool of connections
 type ConnPool struct {
-	mu          sync.Mutex
-	addr        string
-	config      PoolConfig
-	connections []*pooledConn
-	available   chan *pooledConn
-	closed      int32 // atomic
-	activeCount int32 // atomic
+	mu             sync.Mutex
+	addr           string
+	config         PoolConfig
+	connections    []*pooledConn
+	available      chan *pooledConn
+	closed         int32 // atomic
+	activeCount    int32 // atomic
+	availableCount int32 // atomic
 }
 
 // NewConnPool creates a new connection pool
@@ -149,16 +150,18 @@ func (p *ConnPool) createConn() (*pooledConn, error) {
 	}
 
 	pc := &pooledConn{
-		conn:     conn,
-		reader:   bufio.NewReader(conn),
-		lastUsed: time.Now(),
-		inUse:    true,
+		conn:   conn,
+		reader: bufio.NewReader(conn),
 	}
+	pc.lastUsed.Store(time.Now().UnixNano())
+	pc.inUse.Store(true)
 
 	// Authenticate if API key is provided
 	if p.config.APIKey != "" {
 		if err := p.authenticateConn(pc); err != nil {
-			conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				return nil, fmt.Errorf("authentication failed: %v (close failed: %v)", err, closeErr)
+			}
 			return nil, fmt.Errorf("authentication failed: %w", err)
 		}
 		pc.authenticated = true
@@ -198,7 +201,9 @@ func (p *ConnPool) authenticateConn(pc *pooledConn) error {
 
 	if respEnv.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(respEnv.Payload, &errResp)
+		if err := proto.Unmarshal(respEnv.Payload, &errResp); err != nil {
+			return fmt.Errorf("auth error: %w", err)
+		}
 		return fmt.Errorf("auth error: %s", errResp.Message)
 	}
 
@@ -218,6 +223,14 @@ func (p *ConnPool) authenticateConn(pc *pooledConn) error {
 	return nil
 }
 
+func decodeErrorPayload(payload []byte) (string, error) {
+	var errResp pb.Error
+	if err := proto.Unmarshal(payload, &errResp); err != nil {
+		return "", err
+	}
+	return errResp.Message, nil
+}
+
 // getConn gets a connection from the pool
 func (p *ConnPool) getConn() (*pooledConn, error) {
 	if atomic.LoadInt32(&p.closed) == 1 {
@@ -226,15 +239,20 @@ func (p *ConnPool) getConn() (*pooledConn, error) {
 
 	// Try to get from available pool (non-blocking)
 	select {
-	case pc := <-p.available:
-		if pc != nil && time.Since(pc.lastUsed) < p.config.IdleTimeout {
-			pc.inUse = true
+	case pc, ok := <-p.available:
+		if !ok {
+			return nil, ErrPoolClosed
+		}
+		atomic.AddInt32(&p.availableCount, -1)
+		if pc != nil && time.Since(time.Unix(0, pc.lastUsed.Load())) < p.config.IdleTimeout {
+			pc.inUse.Store(true)
 			return pc, nil
 		}
 		if pc != nil {
 			p.closeConn(pc)
 		}
 	default:
+		_ = 0
 	}
 
 	// Check if we can create new connection
@@ -244,9 +262,13 @@ func (p *ConnPool) getConn() (*pooledConn, error) {
 
 	// Wait for available connection with timeout
 	select {
-	case pc := <-p.available:
+	case pc, ok := <-p.available:
+		if !ok {
+			return nil, ErrPoolClosed
+		}
+		atomic.AddInt32(&p.availableCount, -1)
 		if pc != nil {
-			pc.inUse = true
+			pc.inUse.Store(true)
 			return pc, nil
 		}
 	case <-time.After(p.config.ConnTimeout):
@@ -263,11 +285,13 @@ func (p *ConnPool) putConn(pc *pooledConn) {
 		return
 	}
 
-	pc.inUse = false
-	pc.lastUsed = time.Now()
+	pc.inUse.Store(false)
+	pc.lastUsed.Store(time.Now().UnixNano())
 
 	select {
 	case p.available <- pc:
+		atomic.AddInt32(&p.availableCount, 1)
+		return
 	default:
 		p.closeConn(pc)
 	}
@@ -275,7 +299,9 @@ func (p *ConnPool) putConn(pc *pooledConn) {
 
 // closeConn closes a connection
 func (p *ConnPool) closeConn(pc *pooledConn) {
-	pc.conn.Close()
+	if err := pc.conn.Close(); err != nil {
+		pc.inUse.Store(false)
+	}
 	atomic.AddInt32(&p.activeCount, -1)
 
 	p.mu.Lock()
@@ -303,11 +329,15 @@ func (p *ConnPool) cleanIdleConnections() {
 
 		for {
 			select {
-			case pc := <-p.available:
+			case pc, ok := <-p.available:
+				if !ok {
+					return
+				}
+				atomic.AddInt32(&p.availableCount, -1)
 				if pc == nil {
 					continue
 				}
-				if time.Since(pc.lastUsed) > p.config.IdleTimeout {
+				if time.Since(time.Unix(0, pc.lastUsed.Load())) > p.config.IdleTimeout {
 					toClose = append(toClose, pc)
 				} else {
 					toReturn = append(toReturn, pc)
@@ -325,6 +355,8 @@ func (p *ConnPool) cleanIdleConnections() {
 		for _, pc := range toReturn {
 			select {
 			case p.available <- pc:
+				atomic.AddInt32(&p.availableCount, 1)
+				continue
 			default:
 				p.closeConn(pc)
 			}
@@ -339,10 +371,13 @@ func (p *ConnPool) Close() {
 	}
 
 	close(p.available)
+	atomic.StoreInt32(&p.availableCount, 0)
 
 	p.mu.Lock()
 	for _, pc := range p.connections {
-		pc.conn.Close()
+		if err := pc.conn.Close(); err != nil {
+			pc.inUse.Store(false)
+		}
 	}
 	p.connections = nil
 	p.mu.Unlock()
@@ -350,7 +385,7 @@ func (p *ConnPool) Close() {
 
 // Stats returns pool statistics
 func (p *ConnPool) Stats() (active, available int) {
-	return int(atomic.LoadInt32(&p.activeCount)), len(p.available)
+	return int(atomic.LoadInt32(&p.activeCount)), int(atomic.LoadInt32(&p.availableCount))
 }
 
 // =============================================================================
@@ -493,14 +528,18 @@ func (c *Client) doSend(pc *pooledConn, cmdType pb.CommandType, payload proto.Me
 	}
 
 	// Set write deadline
-	pc.conn.SetWriteDeadline(time.Now().Add(c.pool.config.ConnTimeout))
+	if err := pc.conn.SetWriteDeadline(time.Now().Add(c.pool.config.ConnTimeout)); err != nil {
+		return nil, err
+	}
 
 	if err := writeEnvelope(pc.conn, env); err != nil {
 		return nil, err
 	}
 
 	// Set read deadline
-	pc.conn.SetReadDeadline(time.Now().Add(c.pool.config.ConnTimeout * 2))
+	if err := pc.conn.SetReadDeadline(time.Now().Add(c.pool.config.ConnTimeout * 2)); err != nil {
+		return nil, err
+	}
 
 	resp, err := readEnvelope(pc.reader)
 	if err != nil {
@@ -508,13 +547,17 @@ func (c *Client) doSend(pc *pooledConn, cmdType pb.CommandType, payload proto.Me
 	}
 
 	// Clear deadlines
-	pc.conn.SetDeadline(time.Time{})
+	if err := pc.conn.SetDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
 
 	// Check for error response
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
-		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
-		return nil, fmt.Errorf("server error: %s", errResp.Message)
+		msg, err := decodeErrorPayload(resp.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("server error decode failed: %w", err)
+		}
+		return nil, fmt.Errorf("server error: %s", msg)
 	}
 
 	return resp, nil
@@ -1202,6 +1245,30 @@ func (c *Client) MGetEntities(ids []uint64) ([]*types.Entity, error) {
 	return entities, nil
 }
 
+// ListEntities returns entities after the given cursor, up to limit, in ID order.
+func (c *Client) ListEntities(cursor uint64, limit int) ([]*types.Entity, uint64, error) {
+	req := &pb.ListEntitiesRequest{
+		Cursor: cursor,
+		Limit:  int32(limit),
+	}
+	resp, err := c.send(pb.CommandType_CMD_LIST_ENTITIES, req)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var result pb.EntitiesResponse
+	if err := proto.Unmarshal(resp.Payload, &result); err != nil {
+		return nil, 0, err
+	}
+
+	var entities []*types.Entity
+	for _, e := range result.Entities {
+		entities = append(entities, codec.ProtoToEntity(e))
+	}
+
+	return entities, result.NextCursor, nil
+}
+
 func (c *Client) MSetDocuments(docs []types.BulkDocumentInput) ([]uint64, error) {
 	var pbDocs []*pb.AddDocumentRequest
 	for _, d := range docs {
@@ -1336,6 +1403,30 @@ func (c *Client) MGetRelationships(ids []uint64) ([]*types.Relationship, error) 
 	}
 
 	return rels, nil
+}
+
+// ListRelationships returns relationships after the given cursor, up to limit, in ID order.
+func (c *Client) ListRelationships(cursor uint64, limit int) ([]*types.Relationship, uint64, error) {
+	req := &pb.ListRelationshipsRequest{
+		Cursor: cursor,
+		Limit:  int32(limit),
+	}
+	resp, err := c.send(pb.CommandType_CMD_LIST_RELATIONSHIPS, req)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var result pb.RelationshipsResponse
+	if err := proto.Unmarshal(resp.Payload, &result); err != nil {
+		return nil, 0, err
+	}
+
+	var rels []*types.Relationship
+	for _, r := range result.Relationships {
+		rels = append(rels, codec.ProtoToRelationship(r))
+	}
+
+	return rels, result.NextCursor, nil
 }
 
 // =============================================================================

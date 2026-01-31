@@ -23,6 +23,16 @@ type testServer struct {
 	addr string
 }
 
+func closeClient(tb testing.TB, c *Client) {
+	tb.Helper()
+	if c == nil {
+		return
+	}
+	if err := c.Close(); err != nil {
+		tb.Logf("Close error: %v", err)
+	}
+}
+
 func startTestServer(t *testing.T) *testServer {
 	eng := engine.NewEngine(64)
 	srv := server.NewServer(eng)
@@ -33,7 +43,9 @@ func startTestServer(t *testing.T) *testServer {
 		t.Fatalf("Failed to find available port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("Failed to close listener: %v", err)
+	}
 
 	if err := srv.Start(addr); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
@@ -78,7 +90,9 @@ func startTestServerWithAuth(t *testing.T) (*testServer, string) {
 		t.Fatalf("Failed to find available port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("Failed to close listener: %v", err)
+	}
 
 	if err := srv.Start(addr); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
@@ -203,7 +217,7 @@ func TestNewClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Verify client was created (cannot check internal addr)
 	if client == nil {
@@ -223,7 +237,7 @@ func TestNewClientWithConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client with config: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 }
 
 func TestNewClient_InvalidAddress(t *testing.T) {
@@ -245,7 +259,7 @@ func TestClient_Ping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	if err := client.Ping(); err != nil {
 		t.Errorf("Ping failed: %v", err)
@@ -260,20 +274,27 @@ func TestClient_PingConcurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	var wg sync.WaitGroup
 	const numPings = 20
+	errCh := make(chan error, numPings)
 
 	for i := 0; i < numPings; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			client.Ping()
+			if err := client.Ping(); err != nil {
+				errCh <- err
+			}
 		}()
 	}
 
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("Ping failed: %v", err)
+	}
 }
 
 // =============================================================================
@@ -288,7 +309,7 @@ func TestClient_Info(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	info, err := client.Info()
 	if err != nil {
@@ -312,7 +333,7 @@ func TestClient_Health(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	health, err := client.Health()
 	if err != nil {
@@ -336,7 +357,7 @@ func TestClient_AddDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	docID, err := client.AddDocument("ext-doc-001", "test.pdf")
 	if err != nil {
@@ -356,7 +377,7 @@ func TestClient_GetDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add document first
 	docID, err := client.AddDocument("ext-doc-001", "test.pdf")
@@ -387,7 +408,7 @@ func TestClient_GetDocument_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	_, err = client.GetDocument(999999)
 	if err == nil {
@@ -407,7 +428,7 @@ func TestClient_AddEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
 	for i := range embedding {
@@ -432,10 +453,10 @@ func TestClient_GetEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
-	entityID, _ := client.AddEntity("ext-ent-001", "Test Entity", "test", "Description", embedding)
+	entityID := mustAddEntity(t, client, "ext-ent-001", "Test Entity", "test", "Description", embedding)
 
 	entity, err := client.GetEntity(entityID)
 	if err != nil {
@@ -460,10 +481,10 @@ func TestClient_GetEntityByTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
-	client.AddEntity("ext-ent-001", "Unique Entity Title", "test", "Description", embedding)
+	mustAddEntity(t, client, "ext-ent-001", "Unique Entity Title", "test", "Description", embedding)
 
 	entity, err := client.GetEntityByTitle("unique entity title") // lowercase lookup
 	if err != nil {
@@ -487,10 +508,10 @@ func TestClient_AddTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// First add document
-	docID, _ := client.AddDocument("doc-001", "test.pdf")
+	docID := mustAddDocument(t, client, "doc-001", "test.pdf")
 
 	embedding := make([]float32, 64)
 	tuID, err := client.AddTextUnit("tu-001", docID, "This is test content", embedding, 5)
@@ -511,11 +532,11 @@ func TestClient_GetTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
-	docID, _ := client.AddDocument("doc-001", "test.pdf")
+	docID := mustAddDocument(t, client, "doc-001", "test.pdf")
 	embedding := make([]float32, 64)
-	tuID, _ := client.AddTextUnit("tu-001", docID, "Test content", embedding, 5)
+	tuID := mustAddTextUnit(t, client, "tu-001", docID, "Test content", embedding, 5)
 
 	tu, err := client.GetTextUnit(tuID)
 	if err != nil {
@@ -543,11 +564,11 @@ func TestClient_AddRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("ent-001", "Entity 1", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("ent-002", "Entity 2", "test", "Desc", embedding)
+	ent1ID := mustAddEntity(t, client, "ent-001", "Entity 1", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "ent-002", "Entity 2", "test", "Desc", embedding)
 
 	relID, err := client.AddRelationship("rel-001", ent1ID, ent2ID, "RELATED_TO", "Relationship description", 1.0)
 	if err != nil {
@@ -567,12 +588,12 @@ func TestClient_GetRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("ent-001", "Entity 1", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("ent-002", "Entity 2", "test", "Desc", embedding)
-	relID, _ := client.AddRelationship("rel-001", ent1ID, ent2ID, "RELATED_TO", "Desc", 1.0)
+	ent1ID := mustAddEntity(t, client, "ent-001", "Entity 1", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "ent-002", "Entity 2", "test", "Desc", embedding)
+	relID := mustAddRelationship(t, client, "rel-001", ent1ID, ent2ID, "RELATED_TO", "Desc", 1.0)
 
 	rel, err := client.GetRelationship(relID)
 	if err != nil {
@@ -600,7 +621,7 @@ func TestClient_Query(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add some data
 	embedding := make([]float32, 64)
@@ -608,7 +629,7 @@ func TestClient_Query(t *testing.T) {
 		embedding[i] = float32(i) / 64.0
 	}
 
-	client.AddEntity("ent-001", "Test Entity", "test", "Description", embedding)
+	mustAddEntity(t, client, "ent-001", "Test Entity", "test", "Description", embedding)
 
 	// Query using QuerySpec
 	spec := types.QuerySpec{
@@ -646,9 +667,9 @@ func TestClient_SetTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
-	docID, _ := client.AddDocument("doc-001", "test.pdf")
+	docID := mustAddDocument(t, client, "doc-001", "test.pdf")
 
 	// DEPRECATED: Session-based architecture - TTL managed at session level
 	_ = docID
@@ -668,9 +689,9 @@ func TestClient_GetTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
-	docID, _ := client.AddDocument("doc-001", "test.pdf")
+	docID := mustAddDocument(t, client, "doc-001", "test.pdf")
 	// client.SetTTL("document", docID, 3600)
 
 	_ = docID
@@ -707,7 +728,7 @@ func TestClient_FullWorkflow_ChatWithPDF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// 1. Upload document
 	docID, err := client.AddDocument("pdf-001", "research_paper.pdf")
@@ -722,22 +743,26 @@ func TestClient_FullWorkflow_ChatWithPDF(t *testing.T) {
 		embedding[i] = float32(i) / 64.0
 	}
 
-	tu1ID, _ := client.AddTextUnit("chunk-1", docID, "Machine learning is...", embedding, 10)
-	tu2ID, _ := client.AddTextUnit("chunk-2", docID, "Neural networks are...", embedding, 10)
+	tu1ID := mustAddTextUnit(t, client, "chunk-1", docID, "Machine learning is...", embedding, 10)
+	tu2ID := mustAddTextUnit(t, client, "chunk-2", docID, "Neural networks are...", embedding, 10)
 	t.Logf("Created text units: %d, %d", tu1ID, tu2ID)
 
 	// 3. Add entities
-	ent1ID, _ := client.AddEntity("ent-ml", "Machine Learning", "concept", "ML description", embedding)
-	ent2ID, _ := client.AddEntity("ent-nn", "Neural Network", "concept", "NN description", embedding)
+	ent1ID := mustAddEntity(t, client, "ent-ml", "Machine Learning", "concept", "ML description", embedding)
+	ent2ID := mustAddEntity(t, client, "ent-nn", "Neural Network", "concept", "NN description", embedding)
 	t.Logf("Created entities: %d, %d", ent1ID, ent2ID)
 
 	// 4. Add relationship
-	relID, _ := client.AddRelationship("rel-1", ent1ID, ent2ID, "USES", "ML uses NNs", 0.9)
+	relID := mustAddRelationship(t, client, "rel-1", ent1ID, ent2ID, "USES", "ML uses NNs", 0.9)
 	t.Logf("Created relationship: %d", relID)
 
 	// 5. Link text units to entities
-	client.LinkTextUnitToEntity(tu1ID, ent1ID)
-	client.LinkTextUnitToEntity(tu2ID, ent2ID)
+	if err := client.LinkTextUnitToEntity(tu1ID, ent1ID); err != nil {
+		t.Fatalf("LinkTextUnitToEntity failed: %v", err)
+	}
+	if err := client.LinkTextUnitToEntity(tu2ID, ent2ID); err != nil {
+		t.Fatalf("LinkTextUnitToEntity failed: %v", err)
+	}
 
 	// 6. Query
 	spec := types.QuerySpec{
@@ -757,7 +782,10 @@ func TestClient_FullWorkflow_ChatWithPDF(t *testing.T) {
 	t.Logf("Query returned %d text units, %d entities", len(result.TextUnits), len(result.Entities))
 
 	// 7. Check info
-	info, _ := client.Info()
+	info, err := client.Info()
+	if err != nil {
+		t.Fatalf("Info failed: %v", err)
+	}
 	if info.DocumentCount != 1 {
 		t.Errorf("DocumentCount = %d, want 1", info.DocumentCount)
 	}
@@ -777,17 +805,20 @@ func TestClient_ConcurrentOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	var wg sync.WaitGroup
 	const numOps = 20
+	errCh := make(chan error, numOps*3)
 
 	// Concurrent document additions
 	for i := 0; i < numOps; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			client.AddDocument("doc-"+itoa(id), "file.pdf")
+			if _, err := client.AddDocument("doc-"+itoa(id), "file.pdf"); err != nil {
+				errCh <- err
+			}
 		}(i)
 	}
 
@@ -797,7 +828,9 @@ func TestClient_ConcurrentOperations(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			client.AddEntity("ent-"+itoa(id), "Entity "+itoa(id), "test", "Desc", embedding)
+			if _, err := client.AddEntity("ent-"+itoa(id), "Entity "+itoa(id), "test", "Desc", embedding); err != nil {
+				errCh <- err
+			}
 		}(i)
 	}
 
@@ -815,14 +848,23 @@ func TestClient_ConcurrentOperations(t *testing.T) {
 				MaxCommunities: 5,
 				SearchTypes:    []types.SearchType{types.SearchTypeEntity},
 			}
-			client.Query(spec)
+			if _, err := client.Query(spec); err != nil {
+				errCh <- err
+			}
 		}()
 	}
 
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("Concurrent query error: %v", err)
+	}
 
 	// Verify final state
-	info, _ := client.Info()
+	info, err := client.Info()
+	if err != nil {
+		t.Fatalf("Info failed: %v", err)
+	}
 	t.Logf("Final state: %d documents, %d entities", info.DocumentCount, info.EntityCount)
 }
 
@@ -853,7 +895,7 @@ func TestClient_DeleteDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add document first
 	docID, err := client.AddDocument("doc-to-delete", "test.pdf")
@@ -882,10 +924,10 @@ func TestClient_DeleteTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add document and text unit first
-	docID, _ := client.AddDocument("doc-001", "test.pdf")
+	docID := mustAddDocument(t, client, "doc-001", "test.pdf")
 	embedding := make([]float32, 64)
 	tuID, err := client.AddTextUnit("tu-to-delete", docID, "Content to delete", embedding, 5)
 	if err != nil {
@@ -913,7 +955,7 @@ func TestClient_DeleteEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add entity first
 	embedding := make([]float32, 64)
@@ -943,12 +985,12 @@ func TestClient_DeleteRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add entities and relationship first
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("ent-1", "Entity 1", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("ent-2", "Entity 2", "test", "Desc", embedding)
+	ent1ID := mustAddEntity(t, client, "ent-1", "Entity 1", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "ent-2", "Entity 2", "test", "Desc", embedding)
 	relID, err := client.AddRelationship("rel-to-delete", ent1ID, ent2ID, "RELATED", "Desc", 1.0)
 	if err != nil {
 		t.Fatalf("AddRelationship failed: %v", err)
@@ -975,7 +1017,7 @@ func TestClient_UpdateEntityDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add entity first
 	embedding := make([]float32, 64)
@@ -1017,7 +1059,7 @@ func TestClient_AddCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
 	communityID, err := client.AddCommunity("comm-001", "Test Community", "Summary of the community", "Full content", 0, nil, nil, embedding)
@@ -1038,7 +1080,7 @@ func TestClient_GetCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
 	communityID, err := client.AddCommunity("comm-001", "Test Community", "Summary", "Full content", 0, nil, nil, embedding)
@@ -1068,7 +1110,7 @@ func TestClient_DeleteCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
 	communityID, err := client.AddCommunity("comm-del", "Delete Me", "Summary", "Full content", 0, nil, nil, embedding)
@@ -1096,15 +1138,15 @@ func TestClient_ComputeCommunities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add some entities and relationships for community detection
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("ent-a", "Entity A", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("ent-b", "Entity B", "test", "Desc", embedding)
-	ent3ID, _ := client.AddEntity("ent-c", "Entity C", "test", "Desc", embedding)
-	client.AddRelationship("rel-ab", ent1ID, ent2ID, "RELATED", "Desc", 1.0)
-	client.AddRelationship("rel-bc", ent2ID, ent3ID, "RELATED", "Desc", 1.0)
+	ent1ID := mustAddEntity(t, client, "ent-a", "Entity A", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "ent-b", "Entity B", "test", "Desc", embedding)
+	ent3ID := mustAddEntity(t, client, "ent-c", "Entity C", "test", "Desc", embedding)
+	mustAddRelationship(t, client, "rel-ab", ent1ID, ent2ID, "RELATED", "Desc", 1.0)
+	mustAddRelationship(t, client, "rel-bc", ent2ID, ent3ID, "RELATED", "Desc", 1.0)
 
 	result, err := client.ComputeCommunities(1.0, 10)
 	if err != nil {
@@ -1126,15 +1168,15 @@ func TestClient_HierarchicalLeiden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add some entities and relationships for community detection
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("ent-h1", "Entity H1", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("ent-h2", "Entity H2", "test", "Desc", embedding)
-	ent3ID, _ := client.AddEntity("ent-h3", "Entity H3", "test", "Desc", embedding)
-	client.AddRelationship("rel-h12", ent1ID, ent2ID, "RELATED", "Desc", 1.0)
-	client.AddRelationship("rel-h23", ent2ID, ent3ID, "RELATED", "Desc", 1.0)
+	ent1ID := mustAddEntity(t, client, "ent-h1", "Entity H1", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "ent-h2", "Entity H2", "test", "Desc", embedding)
+	ent3ID := mustAddEntity(t, client, "ent-h3", "Entity H3", "test", "Desc", embedding)
+	mustAddRelationship(t, client, "rel-h12", ent1ID, ent2ID, "RELATED", "Desc", 1.0)
+	mustAddRelationship(t, client, "rel-h23", ent2ID, ent3ID, "RELATED", "Desc", 1.0)
 
 	result, err := client.HierarchicalLeiden(3, 1.0)
 	if err != nil {
@@ -1156,13 +1198,13 @@ func TestClient_HierarchicalLeidenDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add some entities and relationships
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("ent-d1", "Entity D1", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("ent-d2", "Entity D2", "test", "Desc", embedding)
-	client.AddRelationship("rel-d12", ent1ID, ent2ID, "RELATED", "Desc", 1.0)
+	ent1ID := mustAddEntity(t, client, "ent-d1", "Entity D1", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "ent-d2", "Entity D2", "test", "Desc", embedding)
+	mustAddRelationship(t, client, "rel-d12", ent1ID, ent2ID, "RELATED", "Desc", 1.0)
 
 	result, err := client.HierarchicalLeidenDefault()
 	if err != nil {
@@ -1186,7 +1228,7 @@ func TestClient_PoolStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	active, available := client.PoolStats()
 	if active < 0 {
@@ -1207,7 +1249,7 @@ func TestClient_SetIdleTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add entity
 	embedding := make([]float32, 64)
@@ -1236,14 +1278,14 @@ func TestClient_Explain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Add data first
 	embedding := make([]float32, 64)
 	for i := range embedding {
 		embedding[i] = float32(i) / 64.0
 	}
-	client.AddEntity("ent-exp", "Explain Entity", "test", "Desc", embedding)
+	mustAddEntity(t, client, "ent-exp", "Explain Entity", "test", "Desc", embedding)
 
 	// First run a query
 	spec := types.QuerySpec{
@@ -1283,7 +1325,7 @@ func TestClient_MSetEntities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
 	entities := []types.BulkEntityInput{
@@ -1310,11 +1352,11 @@ func TestClient_MGetEntities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("mget-ent-1", "MGet Entity 1", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("mget-ent-2", "MGet Entity 2", "test", "Desc", embedding)
+	ent1ID := mustAddEntity(t, client, "mget-ent-1", "MGet Entity 1", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "mget-ent-2", "MGet Entity 2", "test", "Desc", embedding)
 
 	entities, err := client.MGetEntities([]uint64{ent1ID, ent2ID})
 	if err != nil {
@@ -1334,7 +1376,7 @@ func TestClient_MSetDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	docs := []types.BulkDocumentInput{
 		{ExternalID: "bulk-doc-1", Filename: "file1.pdf"},
@@ -1359,10 +1401,10 @@ func TestClient_MGetDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
-	doc1ID, _ := client.AddDocument("mget-doc-1", "file1.pdf")
-	doc2ID, _ := client.AddDocument("mget-doc-2", "file2.pdf")
+	doc1ID := mustAddDocument(t, client, "mget-doc-1", "file1.pdf")
+	doc2ID := mustAddDocument(t, client, "mget-doc-2", "file2.pdf")
 
 	docs, err := client.MGetDocuments([]uint64{doc1ID, doc2ID})
 	if err != nil {
@@ -1382,9 +1424,9 @@ func TestClient_MSetTextUnits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
-	docID, _ := client.AddDocument("mset-tu-doc", "test.pdf")
+	docID := mustAddDocument(t, client, "mset-tu-doc", "test.pdf")
 	embedding := make([]float32, 64)
 
 	tus := []types.BulkTextUnitInput{
@@ -1410,12 +1452,12 @@ func TestClient_MGetTextUnits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
-	docID, _ := client.AddDocument("mget-tu-doc", "test.pdf")
+	docID := mustAddDocument(t, client, "mget-tu-doc", "test.pdf")
 	embedding := make([]float32, 64)
-	tu1ID, _ := client.AddTextUnit("mget-tu-1", docID, "Content 1", embedding, 5)
-	tu2ID, _ := client.AddTextUnit("mget-tu-2", docID, "Content 2", embedding, 5)
+	tu1ID := mustAddTextUnit(t, client, "mget-tu-1", docID, "Content 1", embedding, 5)
+	tu2ID := mustAddTextUnit(t, client, "mget-tu-2", docID, "Content 2", embedding, 5)
 
 	tus, err := client.MGetTextUnits([]uint64{tu1ID, tu2ID})
 	if err != nil {
@@ -1435,12 +1477,12 @@ func TestClient_MSetRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("mset-rel-1", "Entity 1", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("mset-rel-2", "Entity 2", "test", "Desc", embedding)
-	ent3ID, _ := client.AddEntity("mset-rel-3", "Entity 3", "test", "Desc", embedding)
+	ent1ID := mustAddEntity(t, client, "mset-rel-1", "Entity 1", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "mset-rel-2", "Entity 2", "test", "Desc", embedding)
+	ent3ID := mustAddEntity(t, client, "mset-rel-3", "Entity 3", "test", "Desc", embedding)
 
 	rels := []types.BulkRelationshipInput{
 		{ExternalID: "bulk-rel-1", SourceID: ent1ID, TargetID: ent2ID, Type: "RELATED", Description: "Desc", Weight: 1.0},
@@ -1465,13 +1507,13 @@ func TestClient_MGetRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	embedding := make([]float32, 64)
-	ent1ID, _ := client.AddEntity("mget-rel-1", "Entity 1", "test", "Desc", embedding)
-	ent2ID, _ := client.AddEntity("mget-rel-2", "Entity 2", "test", "Desc", embedding)
-	rel1ID, _ := client.AddRelationship("mget-rel-a", ent1ID, ent2ID, "TYPE_A", "Desc", 1.0)
-	rel2ID, _ := client.AddRelationship("mget-rel-b", ent2ID, ent1ID, "TYPE_B", "Desc", 1.0)
+	ent1ID := mustAddEntity(t, client, "mget-rel-1", "Entity 1", "test", "Desc", embedding)
+	ent2ID := mustAddEntity(t, client, "mget-rel-2", "Entity 2", "test", "Desc", embedding)
+	rel1ID := mustAddRelationship(t, client, "mget-rel-a", ent1ID, ent2ID, "TYPE_A", "Desc", 1.0)
+	rel2ID := mustAddRelationship(t, client, "mget-rel-b", ent2ID, ent1ID, "TYPE_B", "Desc", 1.0)
 
 	rels, err := client.MGetRelationships([]uint64{rel1ID, rel2ID})
 	if err != nil {
@@ -1495,7 +1537,7 @@ func TestClient_BGSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// BGSave starts a background save to a path
 	err = client.BGSave("/tmp/gibram_test_save")
@@ -1512,7 +1554,7 @@ func TestClient_Save(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Save performs a blocking save to a path
 	err = client.Save("/tmp/gibram_test_save")
@@ -1529,7 +1571,7 @@ func TestClient_LastSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	info, err := client.LastSave()
 	if err != nil {
@@ -1547,7 +1589,7 @@ func TestClient_BGRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// BGRestore tries to restore from a path
 	err = client.BGRestore("/nonexistent/path")
@@ -1564,7 +1606,7 @@ func TestClient_BackupStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	status, err := client.BackupStatus()
 	if err != nil {
@@ -1594,16 +1636,23 @@ func TestConnPool_MultipleClients(t *testing.T) {
 
 	// Perform multiple concurrent operations to test pool usage
 	var wg sync.WaitGroup
+	errCh := make(chan error, 10)
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			// Use pool via Client
 			client := &Client{pool: pool}
-			client.Ping()
+			if err := client.Ping(); err != nil {
+				errCh <- err
+			}
 		}()
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("Ping failed: %v", err)
+	}
 
 	active, available := pool.Stats()
 	t.Logf("After concurrent ops: active=%d, available=%d", active, available)
@@ -1625,7 +1674,9 @@ func TestConnPool_IdleConnectionCleanup(t *testing.T) {
 
 	// Do something to create a connection
 	client := &Client{pool: pool}
-	client.Ping()
+	if err := client.Ping(); err != nil {
+		t.Fatalf("Ping failed: %v", err)
+	}
 
 	// Wait for idle connection to expire
 	time.Sleep(150 * time.Millisecond)
@@ -1675,7 +1726,7 @@ func TestWriteEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// This exercises writeEnvelope and readEnvelope
 	if err := client.Ping(); err != nil {
@@ -1695,7 +1746,7 @@ func TestClient_ErrorHandling_InvalidEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Try to get non-existent entity
 	_, err = client.GetEntity(999999999)
@@ -1712,7 +1763,7 @@ func TestClient_ErrorHandling_InvalidRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Try to get non-existent relationship
 	_, err = client.GetRelationship(999999999)
@@ -1729,7 +1780,7 @@ func TestClient_ErrorHandling_InvalidTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Try to get non-existent text unit
 	_, err = client.GetTextUnit(999999999)
@@ -1746,7 +1797,7 @@ func TestClient_ErrorHandling_InvalidCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Try to get non-existent community
 	_, err = client.GetCommunity(999999999)
@@ -1763,7 +1814,7 @@ func TestClient_MGetEntities_EmptyIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Get with empty IDs
 	entities, err := client.MGetEntities([]uint64{})
@@ -1781,7 +1832,7 @@ func TestClient_MGetDocuments_EmptyIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	docs, err := client.MGetDocuments([]uint64{})
 	if err != nil {
@@ -1802,7 +1853,7 @@ func TestClient_GetEntityByTitle_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	_, err = client.GetEntityByTitle("nonexistent entity title")
 	if err == nil {
@@ -1826,7 +1877,7 @@ func TestClient_WithAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create authenticated client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Verify client can operate
 	if err := client.Ping(); err != nil {
@@ -1872,7 +1923,7 @@ func TestClient_NoAPIKeyOnAuthServer(t *testing.T) {
 		t.Logf("Connection rejected (expected): %v", err)
 		return
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Try an operation - should fail without auth
 	err = client.Ping()
@@ -1892,7 +1943,7 @@ func TestClient_AuthenticatedOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create authenticated client: %v", err)
 	}
-	defer client.Close()
+	defer closeClient(t, client)
 
 	// Test add document
 	docID, err := client.AddDocument("auth-doc-001", "test.pdf")

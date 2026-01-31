@@ -39,13 +39,19 @@ func TestAtomicSnapshotCreation(t *testing.T) {
 func Test2PCBackupCoordination(t *testing.T) {
 	dir := t.TempDir()
 	walDir := filepath.Join(dir, "wal")
-	os.MkdirAll(walDir, 0755)
+	if err := os.MkdirAll(walDir, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
 	
 	wal, err := NewWAL(walDir, SyncEveryWrite)
 	if err != nil {
 		t.Fatalf("NewWAL failed: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			t.Fatalf("WAL Close failed: %v", err)
+		}
+	}()
 	
 	// Write some WAL entries
 	_, err = wal.Append(EntryInsert, "key1", []byte("data1"))
@@ -98,7 +104,9 @@ func TestWALChecksumIntegrity(t *testing.T) {
 		t.Fatalf("Append failed: %v", err)
 	}
 	
-	wal.Close()
+	if err := wal.Close(); err != nil {
+		t.Fatalf("WAL Close failed: %v", err)
+	}
 	
 	// For now, skip WAL reader test since we don't have a reader implementation
 	// The important part is that writing works with xxHash64
@@ -113,7 +121,11 @@ func BenchmarkWALWrite(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewWAL failed: %v", err)
 	}
-	defer wal.Close()
+	defer func() {
+		if err := wal.Close(); err != nil {
+			b.Fatalf("WAL Close failed: %v", err)
+		}
+	}()
 	
 	data := make([]byte, 1024)
 	

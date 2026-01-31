@@ -1,6 +1,6 @@
 # GibRAM
 
-**Graph in-Buffer Retrieval & Associative Memory** • **v0.1.0**
+**Graph in-Buffer Retrieval & Associative Memory** • **v0.2.0**
 
 GibRAM is an in-memory knowledge graph server designed for retrieval augmented generation (RAG) workflows. It combines graph storage with vector search so related information stays connected in memory.
 

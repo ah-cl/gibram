@@ -18,7 +18,7 @@ func BenchmarkEngine_AddDocument(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.AddDocument(benchSessionID, "doc-"+benchItoa(i), "file.txt")
+		mustAddDocument(b, e, benchSessionID, "doc-"+benchItoa(i), "file.txt")
 	}
 }
 
@@ -27,12 +27,12 @@ func BenchmarkEngine_GetDocument(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 1000; i++ {
-		e.AddDocument(benchSessionID, "doc-"+benchItoa(i), "file.txt")
+		mustAddDocument(b, e, benchSessionID, "doc-"+benchItoa(i), "file.txt")
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.GetDocument(benchSessionID, uint64(i%1000) + 1)
+		e.GetDocument(benchSessionID, uint64(i%1000)+1)
 	}
 }
 
@@ -46,7 +46,7 @@ func BenchmarkEngine_AddEntity(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 	}
 }
 
@@ -56,12 +56,12 @@ func BenchmarkEngine_GetEntity(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 1000; i++ {
-		e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.GetEntity(benchSessionID, uint64(i%1000) + 1)
+		e.GetEntity(benchSessionID, uint64(i%1000)+1)
 	}
 }
 
@@ -71,12 +71,12 @@ func BenchmarkEngine_GetEntityByTitle(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 1000; i++ {
-		e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.GetEntityByTitle(benchSessionID, "Entity " + benchItoa(i%1000))
+		e.GetEntityByTitle(benchSessionID, "Entity "+benchItoa(i%1000))
 	}
 }
 
@@ -87,11 +87,11 @@ func BenchmarkEngine_GetEntityByTitle(b *testing.B) {
 func BenchmarkEngine_AddTextUnit(b *testing.B) {
 	e := NewEngine(128)
 	embedding := benchRandomVector(128)
-	doc, _ := e.AddDocument(benchSessionID, "doc-1", "file.txt")
+	doc := mustAddDocument(b, e, benchSessionID, "doc-1", "file.txt")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.AddTextUnit(benchSessionID, "tu-"+benchItoa(i), doc.ID, "Content", embedding, 10)
+		mustAddTextUnit(b, e, benchSessionID, "tu-"+benchItoa(i), doc.ID, "Content", embedding, 10)
 	}
 }
 
@@ -106,7 +106,7 @@ func BenchmarkEngine_AddRelationship(b *testing.B) {
 	// Pre-populate entities
 	entities := make([]uint64, 1000)
 	for i := 0; i < 1000; i++ {
-		ent, _ := e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		ent := mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 		entities[i] = ent.ID
 	}
 
@@ -114,7 +114,7 @@ func BenchmarkEngine_AddRelationship(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		sourceIdx := i % 1000
 		targetIdx := (i + 1) % 1000
-		e.AddRelationship(benchSessionID, "rel-"+benchItoa(i), entities[sourceIdx], entities[targetIdx], "RELATED", "Desc", 1.0)
+		mustAddRelationship(b, e, benchSessionID, "rel-"+benchItoa(i), entities[sourceIdx], entities[targetIdx], "RELATED", "Desc", 1.0)
 	}
 }
 
@@ -128,7 +128,7 @@ func BenchmarkEngine_Query_100Entities(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 100; i++ {
-		e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 	}
 
 	spec := types.DefaultQuerySpec()
@@ -136,7 +136,9 @@ func BenchmarkEngine_Query_100Entities(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.Query(benchSessionID, spec)
+		if _, err := e.Query(benchSessionID, spec); err != nil {
+			b.Fatalf("Query error: %v", err)
+		}
 	}
 }
 
@@ -150,7 +152,7 @@ func BenchmarkEngine_Query_1KEntities(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 1000; i++ {
-		e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 	}
 
 	spec := types.DefaultQuerySpec()
@@ -158,7 +160,9 @@ func BenchmarkEngine_Query_1KEntities(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.Query(benchSessionID, spec)
+		if _, err := e.Query(benchSessionID, spec); err != nil {
+			b.Fatalf("Query error: %v", err)
+		}
 	}
 }
 
@@ -172,7 +176,7 @@ func BenchmarkEngine_Query_5KEntities(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 5000; i++ {
-		e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 	}
 
 	spec := types.DefaultQuerySpec()
@@ -180,7 +184,9 @@ func BenchmarkEngine_Query_5KEntities(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.Query(benchSessionID, spec)
+		if _, err := e.Query(benchSessionID, spec); err != nil {
+			b.Fatalf("Query error: %v", err)
+		}
 	}
 }
 
@@ -191,13 +197,13 @@ func BenchmarkEngine_Query_WithGraphExpansion(b *testing.B) {
 	// Pre-populate with linked entities
 	entities := make([]uint64, 500)
 	for i := 0; i < 500; i++ {
-		ent, _ := e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		ent := mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 		entities[i] = ent.ID
 	}
 
 	// Add relationships (chain)
 	for i := 0; i < 499; i++ {
-		e.AddRelationship(benchSessionID, "rel-"+benchItoa(i), entities[i], entities[i+1], "RELATED", "Desc", 1.0)
+		mustAddRelationship(b, e, benchSessionID, "rel-"+benchItoa(i), entities[i], entities[i+1], "RELATED", "Desc", 1.0)
 	}
 
 	spec := types.DefaultQuerySpec()
@@ -207,7 +213,9 @@ func BenchmarkEngine_Query_WithGraphExpansion(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.Query(benchSessionID, spec)
+		if _, err := e.Query(benchSessionID, spec); err != nil {
+			b.Fatalf("Query error: %v", err)
+		}
 	}
 }
 
@@ -221,7 +229,7 @@ func BenchmarkEngine_Query_Parallel(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 1000; i++ {
-		e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 	}
 
 	spec := types.DefaultQuerySpec()
@@ -230,7 +238,9 @@ func BenchmarkEngine_Query_Parallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			e.Query(benchSessionID, spec)
+			if _, err := e.Query(benchSessionID, spec); err != nil {
+				b.Fatalf("Query error: %v", err)
+			}
 		}
 	})
 }
@@ -245,13 +255,16 @@ func BenchmarkEngine_Explain(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 100; i++ {
-		e.AddEntity(benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
+		mustAddEntity(b, e, benchSessionID, "ent-"+benchItoa(i), "Entity "+benchItoa(i), "test", "Desc", embedding)
 	}
 
 	// Run a query to get QueryID
 	spec := types.DefaultQuerySpec()
 	spec.QueryVector = embedding
-	result, _ := e.Query(benchSessionID, spec)
+	result, err := e.Query(benchSessionID, spec)
+	if err != nil {
+		b.Fatalf("Query error: %v", err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

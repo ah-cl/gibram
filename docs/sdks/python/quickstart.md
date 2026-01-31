@@ -1,4 +1,4 @@
-# Python SDK Quickstart (v0.1.0)
+# Python SDK Quickstart (v0.2.0)
 
 Get started with GibRAM Python SDK in 5 minutes. This guide walks through installation, indexing, and querying.
 
@@ -18,7 +18,7 @@ Verify installation:
 
 ```bash
 python -c "import gibram; print(gibram.__version__)"
-# Expected: 0.1.0
+# Expected: 0.2.0
 ```
 
 ## Step 2: Set API Key
@@ -289,7 +289,7 @@ Sessions persist until:
 2. TTL expires (if configured)
 3. Manual deletion
 
-**Note**: In v0.1.0, session deletion requires low-level client or CLI. High-level SDK support coming in future versions.
+**Note**: Currently, session deletion requires low-level client or CLI. High-level SDK support coming in future versions.
 
 ## Next Steps
 

@@ -1,4 +1,4 @@
-# Run GibRAM Server (v0.1.0)
+# Run GibRAM Server (v0.2.0)
 
 Get GibRAM server running on your machine. This guide covers the fastest path to a working server.
 
@@ -68,7 +68,7 @@ gibram-server --insecure
 Expected output:
 
 ```
-INFO  GibRAM v0.1.0 starting...
+INFO  GibRAM v0.2.0 starting...
 INFO    Address:    :6161
 INFO    Data dir:   ./data
 INFO    Vector dim: 1536

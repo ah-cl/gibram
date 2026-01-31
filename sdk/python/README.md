@@ -1,4 +1,4 @@
-# GibRAM Python SDK v0.1.0
+# GibRAM Python SDK v0.2.0
 
 GraphRAG-style knowledge graph indexing with automatic entity extraction, relationship detection, and community discovery.
 
@@ -55,7 +55,7 @@ indexer = GibRAMIndexer(
     port=6161,
     
     # LLM configuration
-    llm_provider="openai",           # Only OpenAI supported in v0.1.0
+    llm_provider="openai",           # Only OpenAI supported currently
     llm_api_key="sk-...",            # Auto-detect from OPENAI_API_KEY
     llm_model="gpt-4o",              # GPT-4o recommended
     
@@ -113,7 +113,7 @@ Query knowledge graph.
 
 **Arguments:**
 - `query`: Natural language query
-- `mode`: Query mode (v0.1.0 only supports "local")
+- `mode`: Query mode (currently only supports "local")
 - `top_k`: Number of results (default: 10)
 - `include_entities`: Include entity results
 - `include_text_units`: Include text unit results
@@ -272,4 +272,5 @@ MIT
 
 ## Version
 
+v0.2.0 - Current release
 v0.1.0 - Initial release with OpenAI extraction & embeddings

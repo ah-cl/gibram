@@ -2,7 +2,6 @@
 package vector
 
 import (
-	"math/rand"
 	"testing"
 )
 
@@ -25,7 +24,7 @@ func BenchmarkHNSWIndex_Add_1K(b *testing.B) {
 		b.StartTimer()
 
 		for j, vec := range vectors {
-			idx.Add(uint64(j), vec)
+			mustAdd(b, idx, uint64(j), vec)
 		}
 	}
 }
@@ -49,7 +48,7 @@ func BenchmarkHNSWIndex_Add_10K(b *testing.B) {
 		b.StartTimer()
 
 		for j, vec := range vectors {
-			idx.Add(uint64(j), vec)
+			mustAdd(b, idx, uint64(j), vec)
 		}
 	}
 }
@@ -65,7 +64,7 @@ func BenchmarkHNSWIndex_Search_1K(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 1000; i++ {
-		idx.Add(uint64(i), randomVector(dim))
+		mustAdd(b, idx, uint64(i), randomVector(dim))
 	}
 
 	query := randomVector(dim)
@@ -87,7 +86,7 @@ func BenchmarkHNSWIndex_Search_10K(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 10000; i++ {
-		idx.Add(uint64(i), randomVector(dim))
+		mustAdd(b, idx, uint64(i), randomVector(dim))
 	}
 
 	query := randomVector(dim)
@@ -105,7 +104,7 @@ func BenchmarkHNSWIndex_Search_TopK(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 5000; i++ {
-		idx.Add(uint64(i), randomVector(dim))
+		mustAdd(b, idx, uint64(i), randomVector(dim))
 	}
 
 	query := randomVector(dim)
@@ -140,7 +139,7 @@ func BenchmarkHNSWIndex_Search_EfSearch(b *testing.B) {
 			config.EfSearch = ef
 			idx := NewHNSWIndex(dim, config)
 			for i, vec := range vectors {
-				idx.Add(uint64(i), vec)
+				mustAdd(b, idx, uint64(i), vec)
 			}
 
 			query := randomVector(dim)
@@ -164,7 +163,7 @@ func BenchmarkHNSWIndex_Search_Dimensions(b *testing.B) {
 		b.Run(testName("dim", dim), func(b *testing.B) {
 			idx := NewHNSWIndex(dim, config)
 			for i := 0; i < 1000; i++ {
-				idx.Add(uint64(i), randomVector(dim))
+				mustAdd(b, idx, uint64(i), randomVector(dim))
 			}
 
 			query := randomVector(dim)
@@ -210,7 +209,7 @@ func BenchmarkHNSWIndex_Memory(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		idx := NewHNSWIndex(dim, config)
 		for j := 0; j < 100; j++ {
-			idx.Add(uint64(j), randomVector(dim))
+			mustAdd(b, idx, uint64(j), randomVector(dim))
 		}
 	}
 }
@@ -226,7 +225,7 @@ func BenchmarkHNSWIndex_ConcurrentSearch(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 5000; i++ {
-		idx.Add(uint64(i), randomVector(dim))
+		mustAdd(b, idx, uint64(i), randomVector(dim))
 	}
 
 	b.ResetTimer()
@@ -249,13 +248,15 @@ func BenchmarkHNSWIndex_SaveLoad(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 1000; i++ {
-		idx.Add(uint64(i), randomVector(dim))
+		mustAdd(b, idx, uint64(i), randomVector(dim))
 	}
 
 	b.Run("Save", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			var buf discardWriter
-			idx.Save(&buf)
+			if err := idx.Save(&buf); err != nil {
+				b.Fatalf("Save() error: %v", err)
+			}
 		}
 	})
 }
@@ -287,9 +288,4 @@ func itoa(i int) string {
 		i /= 10
 	}
 	return string(buf[pos:])
-}
-
-// randomVector is duplicated here to avoid import cycle issues in benchmarks
-func init() {
-	rand.Seed(42) // Fixed seed for reproducible benchmarks
 }

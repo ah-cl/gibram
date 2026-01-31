@@ -2,7 +2,6 @@
 package server
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -38,7 +37,7 @@ func createTestServer(t *testing.T) (*Server, string) {
 		t.Fatalf("Failed to find available port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	closeSilently(ln)
 
 	// Start server
 	if err := srv.Start(addr); err != nil {
@@ -89,39 +88,29 @@ func sendCommand(conn net.Conn, cmdType pb.CommandType, payload proto.Message) (
 	return resp, nil
 }
 
-// sendRawFrame sends raw bytes without proper encoding (for testing error handling)
-func sendRawFrame(conn net.Conn, data []byte) error {
-	_, err := conn.Write(data)
-	return err
+func mustUnmarshal(tb testing.TB, payload []byte, msg proto.Message) {
+	tb.Helper()
+	if err := proto.Unmarshal(payload, msg); err != nil {
+		tb.Fatalf("Unmarshal error: %v", err)
+	}
 }
 
-// readResponse reads a response envelope from connection
-func readResponse(conn net.Conn) (*pb.Envelope, error) {
-	// Read codec byte
-	codecByte := make([]byte, 1)
-	if _, err := io.ReadFull(conn, codecByte); err != nil {
-		return nil, err
+func closeSilently(c io.Closer) {
+	if c == nil {
+		return
 	}
-
-	// Read length
-	lenBuf := make([]byte, 4)
-	if _, err := io.ReadFull(conn, lenBuf); err != nil {
-		return nil, err
+	if err := c.Close(); err != nil {
+		_ = err
 	}
-	length := binary.BigEndian.Uint32(lenBuf)
+}
 
-	// Read payload
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(conn, payload); err != nil {
-		return nil, err
+func mustSendCommand(tb testing.TB, conn net.Conn, cmdType pb.CommandType, payload proto.Message) *pb.Envelope {
+	tb.Helper()
+	resp, err := sendCommand(conn, cmdType, payload)
+	if err != nil {
+		tb.Fatalf("sendCommand error: %v", err)
 	}
-
-	var env pb.Envelope
-	if err := proto.Unmarshal(payload, &env); err != nil {
-		return nil, err
-	}
-
-	return &env, nil
+	return resp
 }
 
 // =============================================================================
@@ -198,7 +187,7 @@ func TestServerStartStop(t *testing.T) {
 		t.Fatalf("Failed to find port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	closeSilently(ln)
 
 	// Start server
 	if err := srv.Start(addr); err != nil {
@@ -238,7 +227,7 @@ func TestServerPing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Send PING
 	resp, err := sendCommand(conn, pb.CommandType_CMD_PING, nil)
@@ -260,7 +249,7 @@ func TestServerMultiplePings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Send multiple PINGs on same connection
 	for i := 0; i < 10; i++ {
@@ -377,7 +366,9 @@ func TestServerSetSnapshotCallback(t *testing.T) {
 	}
 
 	// Call it
-	srv.snapshotFn("test.snap")
+	if err := srv.snapshotFn("test.snap"); err != nil {
+		t.Fatalf("Snapshot callback failed: %v", err)
+	}
 	if !called {
 		t.Error("Snapshot callback should have been called")
 	}
@@ -397,7 +388,9 @@ func TestServerSetRestoreCallback(t *testing.T) {
 		t.Error("Restore callback should be set")
 	}
 
-	srv.restoreFn("test.snap")
+	if err := srv.restoreFn("test.snap"); err != nil {
+		t.Fatalf("Restore callback failed: %v", err)
+	}
 	if !called {
 		t.Error("Restore callback should have been called")
 	}
@@ -456,7 +449,7 @@ func TestServerConcurrentConnections(t *testing.T) {
 				t.Logf("Connect error: %v", err)
 				return
 			}
-			defer conn.Close()
+			defer closeSilently(conn)
 
 			// Send multiple PINGs
 			for j := 0; j < 5; j++ {
@@ -508,7 +501,7 @@ func TestServerIntegration_AddAndRetrieveDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add document
 	addReq := &pb.AddDocumentRequest{
@@ -523,7 +516,7 @@ func TestServerIntegration_AddAndRetrieveDocument(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Add document returned error: %s", errResp.Message)
 	}
 
@@ -546,7 +539,7 @@ func TestServerIntegration_Info(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_INFO, nil)
 	if err != nil {
@@ -571,7 +564,7 @@ func TestServerIntegration_Health(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_HEALTH, nil)
 	if err != nil {
@@ -588,6 +581,7 @@ func TestServerIntegration_Health(t *testing.T) {
 		t.Errorf("Expected 'ok' or 'healthy', got '%s'", healthResp.Status)
 	}
 }
+
 // =============================================================================
 // Entity Operations Integration Tests
 // =============================================================================
@@ -600,7 +594,7 @@ func TestServerIntegration_AddEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Create embedding
 	embedding := make([]float32, testVectorDim)
@@ -623,7 +617,7 @@ func TestServerIntegration_AddEntity(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Add entity returned error: %s", errResp.Message)
 	}
 
@@ -645,16 +639,16 @@ func TestServerIntegration_AddTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// First add a document
 	docReq := &pb.AddDocumentRequest{
 		ExternalId: "doc-for-textunit",
 		Filename:   "test.pdf",
 	}
-	docResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
+	docResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(docResp.Payload, &docID)
+	mustUnmarshal(t, docResp.Payload, &docID)
 
 	// Create embedding
 	embedding := make([]float32, testVectorDim)
@@ -677,7 +671,7 @@ func TestServerIntegration_AddTextUnit(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Add text unit returned error: %s", errResp.Message)
 	}
 
@@ -699,7 +693,7 @@ func TestServerIntegration_AddRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Create embedding
 	embedding := make([]float32, testVectorDim)
@@ -714,9 +708,9 @@ func TestServerIntegration_AddRelationship(t *testing.T) {
 		Type:       "person",
 		Embedding:  embedding,
 	}
-	resp1, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
 	var ent1ID pb.OkWithID
-	proto.Unmarshal(resp1.Payload, &ent1ID)
+	mustUnmarshal(t, resp1.Payload, &ent1ID)
 
 	ent2Req := &pb.AddEntityRequest{
 		ExternalId: "entity-rel-2",
@@ -724,9 +718,9 @@ func TestServerIntegration_AddRelationship(t *testing.T) {
 		Type:       "organization",
 		Embedding:  embedding,
 	}
-	resp2, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
 	var ent2ID pb.OkWithID
-	proto.Unmarshal(resp2.Payload, &ent2ID)
+	mustUnmarshal(t, resp2.Payload, &ent2ID)
 
 	// Add relationship
 	relReq := &pb.AddRelationshipRequest{
@@ -745,7 +739,7 @@ func TestServerIntegration_AddRelationship(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Add relationship returned error: %s", errResp.Message)
 	}
 
@@ -771,7 +765,7 @@ func TestServerIntegration_Query(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Create embedding
 	embedding := make([]float32, testVectorDim)
@@ -784,7 +778,7 @@ func TestServerIntegration_Query(t *testing.T) {
 		ExternalId: "doc-query-test",
 		Filename:   "query_test.pdf",
 	}
-	sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
+	mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
 
 	entReq := &pb.AddEntityRequest{
 		ExternalId:  "ent-query-test",
@@ -793,7 +787,7 @@ func TestServerIntegration_Query(t *testing.T) {
 		Description: "Entity for query testing",
 		Embedding:   embedding,
 	}
-	sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
+	mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
 
 	// Execute query
 	queryReq := &pb.QueryRequest{
@@ -813,7 +807,7 @@ func TestServerIntegration_Query(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Query returned error: %s", errResp.Message)
 	}
 
@@ -839,16 +833,16 @@ func TestServerIntegration_DeleteDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add a document
 	addReq := &pb.AddDocumentRequest{
 		ExternalId: "doc-to-delete",
 		Filename:   "delete_me.pdf",
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, addReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &docID)
+	mustUnmarshal(t, resp.Payload, &docID)
 
 	// Delete the document
 	delReq := &pb.DeleteByIDRequest{
@@ -861,7 +855,7 @@ func TestServerIntegration_DeleteDocument(t *testing.T) {
 
 	if delResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(delResp.Payload, &errResp)
+		mustUnmarshal(t, delResp.Payload, &errResp)
 		t.Fatalf("Delete document returned error: %s", errResp.Message)
 	}
 }
@@ -874,7 +868,7 @@ func TestServerIntegration_DeleteEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 	for i := range embedding {
@@ -888,9 +882,9 @@ func TestServerIntegration_DeleteEntity(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
 	var entID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &entID)
+	mustUnmarshal(t, resp.Payload, &entID)
 
 	// Delete the entity
 	delReq := &pb.DeleteByIDRequest{
@@ -903,7 +897,7 @@ func TestServerIntegration_DeleteEntity(t *testing.T) {
 
 	if delResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(delResp.Payload, &errResp)
+		mustUnmarshal(t, delResp.Payload, &errResp)
 		t.Fatalf("Delete entity returned error: %s", errResp.Message)
 	}
 }
@@ -922,16 +916,16 @@ func TestServerIntegration_SetTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add a document
 	addReq := &pb.AddDocumentRequest{
 		ExternalId: "doc-ttl-test",
 		Filename:   "ttl_test.pdf",
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, addReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &docID)
+	mustUnmarshal(t, resp.Payload, &docID)
 
 	// Set TTL
 	ttlReq := &pb.SetTTLRequest{
@@ -946,7 +940,7 @@ func TestServerIntegration_SetTTL(t *testing.T) {
 
 	if ttlResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(ttlResp.Payload, &errResp)
+		mustUnmarshal(t, ttlResp.Payload, &errResp)
 		t.Fatalf("Set TTL returned error: %s", errResp.Message)
 	}
 }
@@ -964,7 +958,7 @@ func TestServerIntegration_UnknownCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Send unknown command type
 	resp, err := sendCommand(conn, pb.CommandType(9999), nil)
@@ -986,7 +980,7 @@ func TestServerIntegration_GetNonexistentDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Try to get non-existent document
 	getReq := &pb.DeleteByIDRequest{
@@ -1024,7 +1018,7 @@ func TestServerIntegration_ConcurrentAdds(t *testing.T) {
 				t.Logf("Connect failed for goroutine %d: %v", id, err)
 				return
 			}
-			defer conn.Close()
+			defer closeSilently(conn)
 
 			embedding := make([]float32, testVectorDim)
 			for j := range embedding {
@@ -1036,7 +1030,7 @@ func TestServerIntegration_ConcurrentAdds(t *testing.T) {
 				ExternalId: "doc-concurrent-" + itoa(id),
 				Filename:   "concurrent_" + itoa(id) + ".pdf",
 			}
-			sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
+			mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
 
 			// Add entity
 			entReq := &pb.AddEntityRequest{
@@ -1046,19 +1040,22 @@ func TestServerIntegration_ConcurrentAdds(t *testing.T) {
 				Description: "Concurrent test entity",
 				Embedding:   embedding,
 			}
-			sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
+			mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
 		}(i)
 	}
 
 	wg.Wait()
 
 	// Verify counts
-	conn, _ := net.DialTimeout("tcp", addr, 5*time.Second)
-	defer conn.Close()
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect for info check: %v", err)
+	}
+	defer closeSilently(conn)
 
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_INFO, nil)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_INFO, nil)
 	var infoResp pb.InfoResponse
-	proto.Unmarshal(resp.Payload, &infoResp)
+	mustUnmarshal(t, resp.Payload, &infoResp)
 
 	if infoResp.DocumentCount < uint64(numGoroutines) {
 		t.Errorf("DocumentCount = %d, expected at least %d", infoResp.DocumentCount, numGoroutines)
@@ -1095,16 +1092,16 @@ func TestServerIntegration_GetDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add a document
 	addReq := &pb.AddDocumentRequest{
 		ExternalId: "doc-get-test",
 		Filename:   "get_test.pdf",
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, addReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &docID)
+	mustUnmarshal(t, resp.Payload, &docID)
 
 	// Get the document
 	getReq := &pb.GetByIDRequest{
@@ -1117,7 +1114,7 @@ func TestServerIntegration_GetDocument(t *testing.T) {
 
 	if getResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(getResp.Payload, &errResp)
+		mustUnmarshal(t, getResp.Payload, &errResp)
 		t.Fatalf("Get document returned error: %s", errResp.Message)
 	}
 
@@ -1139,16 +1136,16 @@ func TestServerIntegration_GetTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// First add a document
 	docReq := &pb.AddDocumentRequest{
 		ExternalId: "doc-for-tu-get",
 		Filename:   "test.pdf",
 	}
-	docResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
+	docResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(docResp.Payload, &docID)
+	mustUnmarshal(t, docResp.Payload, &docID)
 
 	// Add text unit
 	embedding := make([]float32, testVectorDim)
@@ -1159,9 +1156,9 @@ func TestServerIntegration_GetTextUnit(t *testing.T) {
 		Embedding:  embedding,
 		TokenCount: 5,
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_TEXTUNIT, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_TEXTUNIT, addReq)
 	var tuID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &tuID)
+	mustUnmarshal(t, resp.Payload, &tuID)
 
 	// Get the text unit
 	getReq := &pb.GetByIDRequest{
@@ -1174,7 +1171,7 @@ func TestServerIntegration_GetTextUnit(t *testing.T) {
 
 	if getResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(getResp.Payload, &errResp)
+		mustUnmarshal(t, getResp.Payload, &errResp)
 		t.Fatalf("Get text unit returned error: %s", errResp.Message)
 	}
 }
@@ -1187,7 +1184,7 @@ func TestServerIntegration_GetEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 	addReq := &pb.AddEntityRequest{
@@ -1197,9 +1194,9 @@ func TestServerIntegration_GetEntity(t *testing.T) {
 		Description: "Entity for get testing",
 		Embedding:   embedding,
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
 	var entID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &entID)
+	mustUnmarshal(t, resp.Payload, &entID)
 
 	// Get the entity
 	getReq := &pb.GetByIDRequest{
@@ -1212,7 +1209,7 @@ func TestServerIntegration_GetEntity(t *testing.T) {
 
 	if getResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(getResp.Payload, &errResp)
+		mustUnmarshal(t, getResp.Payload, &errResp)
 		t.Fatalf("Get entity returned error: %s", errResp.Message)
 	}
 }
@@ -1225,7 +1222,7 @@ func TestServerIntegration_GetEntityByTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 	addReq := &pb.AddEntityRequest{
@@ -1235,7 +1232,7 @@ func TestServerIntegration_GetEntityByTitle(t *testing.T) {
 		Description: "Entity for title search",
 		Embedding:   embedding,
 	}
-	sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
+	mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
 
 	// Get by title
 	getReq := &pb.GetEntityByTitleRequest{
@@ -1248,7 +1245,7 @@ func TestServerIntegration_GetEntityByTitle(t *testing.T) {
 
 	if getResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(getResp.Payload, &errResp)
+		mustUnmarshal(t, getResp.Payload, &errResp)
 		t.Logf("Get entity by title returned error (may be expected): %s", errResp.Message)
 	}
 }
@@ -1261,7 +1258,7 @@ func TestServerIntegration_GetRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 
@@ -1272,9 +1269,9 @@ func TestServerIntegration_GetRelationship(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp1, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
 	var ent1ID pb.OkWithID
-	proto.Unmarshal(resp1.Payload, &ent1ID)
+	mustUnmarshal(t, resp1.Payload, &ent1ID)
 
 	ent2Req := &pb.AddEntityRequest{
 		ExternalId: "rel-get-ent2",
@@ -1282,9 +1279,9 @@ func TestServerIntegration_GetRelationship(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp2, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
 	var ent2ID pb.OkWithID
-	proto.Unmarshal(resp2.Payload, &ent2ID)
+	mustUnmarshal(t, resp2.Payload, &ent2ID)
 
 	// Add relationship
 	relReq := &pb.AddRelationshipRequest{
@@ -1295,9 +1292,9 @@ func TestServerIntegration_GetRelationship(t *testing.T) {
 		Description: "Test relationship",
 		Weight:      1.0,
 	}
-	relResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_RELATIONSHIP, relReq)
+	relResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_RELATIONSHIP, relReq)
 	var relID pb.OkWithID
-	proto.Unmarshal(relResp.Payload, &relID)
+	mustUnmarshal(t, relResp.Payload, &relID)
 
 	// Get the relationship
 	getReq := &pb.GetByIDRequest{
@@ -1310,7 +1307,7 @@ func TestServerIntegration_GetRelationship(t *testing.T) {
 
 	if getResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(getResp.Payload, &errResp)
+		mustUnmarshal(t, getResp.Payload, &errResp)
 		t.Fatalf("Get relationship returned error: %s", errResp.Message)
 	}
 }
@@ -1327,16 +1324,16 @@ func TestServerIntegration_DeleteTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// First add a document
 	docReq := &pb.AddDocumentRequest{
 		ExternalId: "doc-for-tu-del",
 		Filename:   "test.pdf",
 	}
-	docResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
+	docResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(docResp.Payload, &docID)
+	mustUnmarshal(t, docResp.Payload, &docID)
 
 	// Add text unit
 	embedding := make([]float32, testVectorDim)
@@ -1347,9 +1344,9 @@ func TestServerIntegration_DeleteTextUnit(t *testing.T) {
 		Embedding:  embedding,
 		TokenCount: 5,
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_TEXTUNIT, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_TEXTUNIT, addReq)
 	var tuID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &tuID)
+	mustUnmarshal(t, resp.Payload, &tuID)
 
 	// Delete text unit
 	delReq := &pb.DeleteByIDRequest{
@@ -1362,7 +1359,7 @@ func TestServerIntegration_DeleteTextUnit(t *testing.T) {
 
 	if delResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(delResp.Payload, &errResp)
+		mustUnmarshal(t, delResp.Payload, &errResp)
 		t.Fatalf("Delete text unit returned error: %s", errResp.Message)
 	}
 }
@@ -1375,7 +1372,7 @@ func TestServerIntegration_DeleteRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 
@@ -1386,9 +1383,9 @@ func TestServerIntegration_DeleteRelationship(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp1, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
 	var ent1ID pb.OkWithID
-	proto.Unmarshal(resp1.Payload, &ent1ID)
+	mustUnmarshal(t, resp1.Payload, &ent1ID)
 
 	ent2Req := &pb.AddEntityRequest{
 		ExternalId: "rel-del-ent2",
@@ -1396,9 +1393,9 @@ func TestServerIntegration_DeleteRelationship(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp2, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
 	var ent2ID pb.OkWithID
-	proto.Unmarshal(resp2.Payload, &ent2ID)
+	mustUnmarshal(t, resp2.Payload, &ent2ID)
 
 	// Add relationship
 	relReq := &pb.AddRelationshipRequest{
@@ -1409,9 +1406,9 @@ func TestServerIntegration_DeleteRelationship(t *testing.T) {
 		Description: "Test relationship for delete",
 		Weight:      1.0,
 	}
-	relResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_RELATIONSHIP, relReq)
+	relResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_RELATIONSHIP, relReq)
 	var relID pb.OkWithID
-	proto.Unmarshal(relResp.Payload, &relID)
+	mustUnmarshal(t, relResp.Payload, &relID)
 
 	// Delete relationship
 	delReq := &pb.DeleteByIDRequest{
@@ -1424,7 +1421,7 @@ func TestServerIntegration_DeleteRelationship(t *testing.T) {
 
 	if delResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(delResp.Payload, &errResp)
+		mustUnmarshal(t, delResp.Payload, &errResp)
 		t.Fatalf("Delete relationship returned error: %s", errResp.Message)
 	}
 }
@@ -1441,16 +1438,16 @@ func TestServerIntegration_LinkTextUnitToEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add document
 	docReq := &pb.AddDocumentRequest{
 		ExternalId: "doc-link-test",
 		Filename:   "link_test.pdf",
 	}
-	docResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
+	docResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(docResp.Payload, &docID)
+	mustUnmarshal(t, docResp.Payload, &docID)
 
 	// Add text unit
 	embedding := make([]float32, testVectorDim)
@@ -1461,9 +1458,9 @@ func TestServerIntegration_LinkTextUnitToEntity(t *testing.T) {
 		Embedding:  embedding,
 		TokenCount: 5,
 	}
-	tuResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_TEXTUNIT, tuReq)
+	tuResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_TEXTUNIT, tuReq)
 	var tuID pb.OkWithID
-	proto.Unmarshal(tuResp.Payload, &tuID)
+	mustUnmarshal(t, tuResp.Payload, &tuID)
 
 	// Add entity
 	entReq := &pb.AddEntityRequest{
@@ -1472,9 +1469,9 @@ func TestServerIntegration_LinkTextUnitToEntity(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	entResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
+	entResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
 	var entID pb.OkWithID
-	proto.Unmarshal(entResp.Payload, &entID)
+	mustUnmarshal(t, entResp.Payload, &entID)
 
 	// Link text unit to entity
 	linkReq := &pb.LinkTextUnitEntityRequest{
@@ -1488,7 +1485,7 @@ func TestServerIntegration_LinkTextUnitToEntity(t *testing.T) {
 
 	if linkResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(linkResp.Payload, &errResp)
+		mustUnmarshal(t, linkResp.Payload, &errResp)
 		t.Fatalf("Link text unit to entity returned error: %s", errResp.Message)
 	}
 }
@@ -1505,7 +1502,7 @@ func TestServerIntegration_UpdateEntityDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 	addReq := &pb.AddEntityRequest{
@@ -1515,9 +1512,9 @@ func TestServerIntegration_UpdateEntityDescription(t *testing.T) {
 		Description: "Original description",
 		Embedding:   embedding,
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
 	var entID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &entID)
+	mustUnmarshal(t, resp.Payload, &entID)
 
 	// Update entity description
 	newEmbedding := make([]float32, testVectorDim)
@@ -1536,7 +1533,7 @@ func TestServerIntegration_UpdateEntityDescription(t *testing.T) {
 
 	if updateResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(updateResp.Payload, &errResp)
+		mustUnmarshal(t, updateResp.Payload, &errResp)
 		t.Fatalf("Update entity description returned error: %s", errResp.Message)
 	}
 }
@@ -1553,7 +1550,7 @@ func TestServerIntegration_AddCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 	addReq := &pb.AddCommunityRequest{
@@ -1571,7 +1568,7 @@ func TestServerIntegration_AddCommunity(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Add community returned error: %s", errResp.Message)
 	}
 
@@ -1593,7 +1590,7 @@ func TestServerIntegration_GetCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add community first
 	embedding := make([]float32, testVectorDim)
@@ -1605,9 +1602,9 @@ func TestServerIntegration_GetCommunity(t *testing.T) {
 		Level:       0,
 		Embedding:   embedding,
 	}
-	addResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_COMMUNITY, addReq)
+	addResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_COMMUNITY, addReq)
 	var commID pb.OkWithID
-	proto.Unmarshal(addResp.Payload, &commID)
+	mustUnmarshal(t, addResp.Payload, &commID)
 
 	// Get community
 	getReq := &pb.GetByIDRequest{
@@ -1620,7 +1617,7 @@ func TestServerIntegration_GetCommunity(t *testing.T) {
 
 	if getResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(getResp.Payload, &errResp)
+		mustUnmarshal(t, getResp.Payload, &errResp)
 		t.Fatalf("Get community returned error: %s", errResp.Message)
 	}
 }
@@ -1633,7 +1630,7 @@ func TestServerIntegration_DeleteCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add community first
 	embedding := make([]float32, testVectorDim)
@@ -1645,9 +1642,9 @@ func TestServerIntegration_DeleteCommunity(t *testing.T) {
 		Level:       0,
 		Embedding:   embedding,
 	}
-	addResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_COMMUNITY, addReq)
+	addResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_COMMUNITY, addReq)
 	var commID pb.OkWithID
-	proto.Unmarshal(addResp.Payload, &commID)
+	mustUnmarshal(t, addResp.Payload, &commID)
 
 	// Delete community
 	delReq := &pb.DeleteByIDRequest{
@@ -1660,7 +1657,7 @@ func TestServerIntegration_DeleteCommunity(t *testing.T) {
 
 	if delResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(delResp.Payload, &errResp)
+		mustUnmarshal(t, delResp.Payload, &errResp)
 		t.Fatalf("Delete community returned error: %s", errResp.Message)
 	}
 }
@@ -1673,7 +1670,7 @@ func TestServerIntegration_ComputeCommunities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add some entities and relationships for community detection
 	embedding := make([]float32, testVectorDim)
@@ -1685,7 +1682,7 @@ func TestServerIntegration_ComputeCommunities(t *testing.T) {
 			Type:       "test",
 			Embedding:  embedding,
 		}
-		sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
+		mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
 	}
 
 	// Compute communities
@@ -1700,7 +1697,7 @@ func TestServerIntegration_ComputeCommunities(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("Compute communities returned error (may be expected with no relationships): %s", errResp.Message)
 	}
 }
@@ -1713,7 +1710,7 @@ func TestServerIntegration_HierarchicalLeiden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add some entities
 	embedding := make([]float32, testVectorDim)
@@ -1724,7 +1721,7 @@ func TestServerIntegration_HierarchicalLeiden(t *testing.T) {
 			Type:       "test",
 			Embedding:  embedding,
 		}
-		sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
+		mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, entReq)
 	}
 
 	// Hierarchical Leiden
@@ -1739,7 +1736,7 @@ func TestServerIntegration_HierarchicalLeiden(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("Hierarchical Leiden returned error (may be expected): %s", errResp.Message)
 	}
 }
@@ -1758,7 +1755,7 @@ func TestServerIntegration_SetIdleTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add an entity
 	embedding := make([]float32, testVectorDim)
@@ -1768,9 +1765,9 @@ func TestServerIntegration_SetIdleTTL(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
 	var entID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &entID)
+	mustUnmarshal(t, resp.Payload, &entID)
 
 	// Set idle TTL
 	ttlReq := &pb.SetIdleTTLRequest{
@@ -1785,7 +1782,7 @@ func TestServerIntegration_SetIdleTTL(t *testing.T) {
 
 	if ttlResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(ttlResp.Payload, &errResp)
+		mustUnmarshal(t, ttlResp.Payload, &errResp)
 		t.Fatalf("Set idle TTL returned error: %s", errResp.Message)
 	}
 }
@@ -1802,7 +1799,7 @@ func TestServerIntegration_GetTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add an entity with TTL
 	embedding := make([]float32, testVectorDim)
@@ -1813,9 +1810,9 @@ func TestServerIntegration_GetTTL(t *testing.T) {
 		Embedding:  embedding,
 		Ttl:        3600,
 	}
-	resp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
+	resp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
 	var entID pb.OkWithID
-	proto.Unmarshal(resp.Payload, &entID)
+	mustUnmarshal(t, resp.Payload, &entID)
 
 	// Get TTL
 	ttlReq := &pb.GetTTLRequest{
@@ -1829,7 +1826,7 @@ func TestServerIntegration_GetTTL(t *testing.T) {
 
 	if ttlResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(ttlResp.Payload, &errResp)
+		mustUnmarshal(t, ttlResp.Payload, &errResp)
 		t.Logf("Get TTL returned error (may be expected): %s", errResp.Message)
 	}
 }
@@ -1846,7 +1843,7 @@ func TestServerIntegration_Explain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// First run a query
 	embedding := make([]float32, testVectorDim)
@@ -1859,9 +1856,9 @@ func TestServerIntegration_Explain(t *testing.T) {
 		MaxCommunities: 5,
 		SearchTypes:    []string{"entity"},
 	}
-	queryResp, _ := sendCommand(conn, pb.CommandType_CMD_QUERY, queryReq)
+	queryResp := mustSendCommand(t, conn, pb.CommandType_CMD_QUERY, queryReq)
 	var qResp pb.QueryResponse
-	proto.Unmarshal(queryResp.Payload, &qResp)
+	mustUnmarshal(t, queryResp.Payload, &qResp)
 
 	// Explain the query
 	explainReq := &pb.ExplainRequest{
@@ -1874,7 +1871,7 @@ func TestServerIntegration_Explain(t *testing.T) {
 
 	if explainResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(explainResp.Payload, &errResp)
+		mustUnmarshal(t, explainResp.Payload, &errResp)
 		t.Logf("Explain returned error (may be expected): %s", errResp.Message)
 	}
 }
@@ -1891,7 +1888,7 @@ func TestServerIntegration_MSetEntities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 	entities := []*pb.AddEntityRequest{
@@ -1909,7 +1906,7 @@ func TestServerIntegration_MSetEntities(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("MSet entities returned error: %s", errResp.Message)
 	}
 }
@@ -1922,7 +1919,7 @@ func TestServerIntegration_MGetEntities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add entities first
 	embedding := make([]float32, testVectorDim)
@@ -1932,9 +1929,9 @@ func TestServerIntegration_MGetEntities(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp1, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
 	var ent1ID pb.OkWithID
-	proto.Unmarshal(resp1.Payload, &ent1ID)
+	mustUnmarshal(t, resp1.Payload, &ent1ID)
 
 	ent2Req := &pb.AddEntityRequest{
 		ExternalId: "mget-ent-2",
@@ -1942,9 +1939,9 @@ func TestServerIntegration_MGetEntities(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp2, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
 	var ent2ID pb.OkWithID
-	proto.Unmarshal(resp2.Payload, &ent2ID)
+	mustUnmarshal(t, resp2.Payload, &ent2ID)
 
 	// MGet entities
 	mgetReq := &pb.MGetEntitiesRequest{
@@ -1957,8 +1954,78 @@ func TestServerIntegration_MGetEntities(t *testing.T) {
 
 	if mgetResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(mgetResp.Payload, &errResp)
+		mustUnmarshal(t, mgetResp.Payload, &errResp)
 		t.Fatalf("MGet entities returned error: %s", errResp.Message)
+	}
+}
+
+func TestServerIntegration_ListEntities(t *testing.T) {
+	srv, addr := createTestServer(t)
+	defer srv.Stop()
+
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer closeSilently(conn)
+
+	for i := 0; i < 5; i++ {
+		addReq := &pb.AddEntityRequest{
+			ExternalId: fmt.Sprintf("list-ent-%d", i+1),
+			Title:      fmt.Sprintf("List Entity %d", i+1),
+			Type:       "test",
+		}
+		resp, err := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, addReq)
+		if err != nil {
+			t.Fatalf("AddEntity failed: %v", err)
+		}
+		if resp.CmdType == pb.CommandType_CMD_ERROR {
+			var errResp pb.Error
+			mustUnmarshal(t, resp.Payload, &errResp)
+			t.Fatalf("AddEntity returned error: %s", errResp.Message)
+		}
+	}
+
+	var allIDs []uint64
+	var cursor uint64
+	for page := 0; page < 3; page++ {
+		listReq := &pb.ListEntitiesRequest{Cursor: cursor, Limit: 2}
+		resp, err := sendCommand(conn, pb.CommandType_CMD_LIST_ENTITIES, listReq)
+		if err != nil {
+			t.Fatalf("List entities failed: %v", err)
+		}
+		if resp.CmdType == pb.CommandType_CMD_ERROR {
+			var errResp pb.Error
+			mustUnmarshal(t, resp.Payload, &errResp)
+			t.Fatalf("List entities returned error: %s", errResp.Message)
+		}
+
+		var listResp pb.EntitiesResponse
+		if err := proto.Unmarshal(resp.Payload, &listResp); err != nil {
+			t.Fatalf("Failed to unmarshal list entities response: %v", err)
+		}
+		if len(listResp.Entities) == 0 {
+			t.Fatalf("Expected entities on page %d", page+1)
+		}
+		if listResp.NextCursor != 0 && listResp.NextCursor != listResp.Entities[len(listResp.Entities)-1].Id {
+			t.Fatalf("Expected next cursor to match last entity ID")
+		}
+
+		for i := range listResp.Entities {
+			allIDs = append(allIDs, listResp.Entities[i].Id)
+			if i > 0 && listResp.Entities[i-1].Id >= listResp.Entities[i].Id {
+				t.Fatalf("Expected ascending IDs on page %d", page+1)
+			}
+		}
+
+		cursor = listResp.NextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if len(allIDs) != 5 {
+		t.Fatalf("Expected 5 entities total, got %d", len(allIDs))
 	}
 }
 
@@ -1970,7 +2037,7 @@ func TestServerIntegration_MSetDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	docs := []*pb.AddDocumentRequest{
 		{SessionId: testSessionID, ExternalId: "bulk-doc-1", Filename: "doc1.pdf"},
@@ -1987,7 +2054,7 @@ func TestServerIntegration_MSetDocuments(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("MSet documents returned error: %s", errResp.Message)
 	}
 }
@@ -2000,24 +2067,24 @@ func TestServerIntegration_MGetDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add documents first
 	doc1Req := &pb.AddDocumentRequest{
 		ExternalId: "mget-doc-1",
 		Filename:   "mget1.pdf",
 	}
-	resp1, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, doc1Req)
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, doc1Req)
 	var doc1ID pb.OkWithID
-	proto.Unmarshal(resp1.Payload, &doc1ID)
+	mustUnmarshal(t, resp1.Payload, &doc1ID)
 
 	doc2Req := &pb.AddDocumentRequest{
 		ExternalId: "mget-doc-2",
 		Filename:   "mget2.pdf",
 	}
-	resp2, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, doc2Req)
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, doc2Req)
 	var doc2ID pb.OkWithID
-	proto.Unmarshal(resp2.Payload, &doc2ID)
+	mustUnmarshal(t, resp2.Payload, &doc2ID)
 
 	// MGet documents
 	mgetReq := &pb.MGetDocumentsRequest{
@@ -2030,7 +2097,7 @@ func TestServerIntegration_MGetDocuments(t *testing.T) {
 
 	if mgetResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(mgetResp.Payload, &errResp)
+		mustUnmarshal(t, mgetResp.Payload, &errResp)
 		t.Fatalf("MGet documents returned error: %s", errResp.Message)
 	}
 }
@@ -2043,16 +2110,16 @@ func TestServerIntegration_MSetTextUnits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add document first
 	docReq := &pb.AddDocumentRequest{
 		ExternalId: "mset-tu-doc",
 		Filename:   "mset_tu.pdf",
 	}
-	docResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
+	docResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(docResp.Payload, &docID)
+	mustUnmarshal(t, docResp.Payload, &docID)
 
 	embedding := make([]float32, testVectorDim)
 	tus := []*pb.AddTextUnitRequest{
@@ -2070,7 +2137,7 @@ func TestServerIntegration_MSetTextUnits(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("MSet text units returned error: %s", errResp.Message)
 	}
 }
@@ -2083,16 +2150,16 @@ func TestServerIntegration_MGetTextUnits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add document first
 	docReq := &pb.AddDocumentRequest{
 		ExternalId: "mget-tu-doc",
 		Filename:   "mget_tu.pdf",
 	}
-	docResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
+	docResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_DOCUMENT, docReq)
 	var docID pb.OkWithID
-	proto.Unmarshal(docResp.Payload, &docID)
+	mustUnmarshal(t, docResp.Payload, &docID)
 
 	// Add text units
 	embedding := make([]float32, testVectorDim)
@@ -2103,9 +2170,9 @@ func TestServerIntegration_MGetTextUnits(t *testing.T) {
 		Embedding:  embedding,
 		TokenCount: 5,
 	}
-	resp1, _ := sendCommand(conn, pb.CommandType_CMD_ADD_TEXTUNIT, tu1Req)
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_TEXTUNIT, tu1Req)
 	var tu1ID pb.OkWithID
-	proto.Unmarshal(resp1.Payload, &tu1ID)
+	mustUnmarshal(t, resp1.Payload, &tu1ID)
 
 	tu2Req := &pb.AddTextUnitRequest{
 		ExternalId: "mget-tu-2",
@@ -2114,9 +2181,9 @@ func TestServerIntegration_MGetTextUnits(t *testing.T) {
 		Embedding:  embedding,
 		TokenCount: 5,
 	}
-	resp2, _ := sendCommand(conn, pb.CommandType_CMD_ADD_TEXTUNIT, tu2Req)
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_TEXTUNIT, tu2Req)
 	var tu2ID pb.OkWithID
-	proto.Unmarshal(resp2.Payload, &tu2ID)
+	mustUnmarshal(t, resp2.Payload, &tu2ID)
 
 	// MGet text units
 	mgetReq := &pb.MGetTextUnitsRequest{
@@ -2129,7 +2196,7 @@ func TestServerIntegration_MGetTextUnits(t *testing.T) {
 
 	if mgetResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(mgetResp.Payload, &errResp)
+		mustUnmarshal(t, mgetResp.Payload, &errResp)
 		t.Fatalf("MGet text units returned error: %s", errResp.Message)
 	}
 }
@@ -2142,7 +2209,7 @@ func TestServerIntegration_MSetRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add entities first
 	embedding := make([]float32, testVectorDim)
@@ -2152,9 +2219,9 @@ func TestServerIntegration_MSetRelationships(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp1, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
 	var ent1ID pb.OkWithID
-	proto.Unmarshal(resp1.Payload, &ent1ID)
+	mustUnmarshal(t, resp1.Payload, &ent1ID)
 
 	ent2Req := &pb.AddEntityRequest{
 		ExternalId: "mset-rel-ent2",
@@ -2162,9 +2229,9 @@ func TestServerIntegration_MSetRelationships(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp2, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
 	var ent2ID pb.OkWithID
-	proto.Unmarshal(resp2.Payload, &ent2ID)
+	mustUnmarshal(t, resp2.Payload, &ent2ID)
 
 	rels := []*pb.AddRelationshipRequest{
 		{SessionId: testSessionID, ExternalId: "bulk-rel-1", SourceId: ent1ID.Id, TargetId: ent2ID.Id, Type: "RELATED", Description: "Desc", Weight: 1.0},
@@ -2180,7 +2247,7 @@ func TestServerIntegration_MSetRelationships(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("MSet relationships returned error: %s", errResp.Message)
 	}
 }
@@ -2193,7 +2260,7 @@ func TestServerIntegration_MGetRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add entities first
 	embedding := make([]float32, testVectorDim)
@@ -2203,9 +2270,9 @@ func TestServerIntegration_MGetRelationships(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp1, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
 	var ent1ID pb.OkWithID
-	proto.Unmarshal(resp1.Payload, &ent1ID)
+	mustUnmarshal(t, resp1.Payload, &ent1ID)
 
 	ent2Req := &pb.AddEntityRequest{
 		ExternalId: "mget-rel-ent2",
@@ -2213,9 +2280,9 @@ func TestServerIntegration_MGetRelationships(t *testing.T) {
 		Type:       "test",
 		Embedding:  embedding,
 	}
-	resp2, _ := sendCommand(conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
 	var ent2ID pb.OkWithID
-	proto.Unmarshal(resp2.Payload, &ent2ID)
+	mustUnmarshal(t, resp2.Payload, &ent2ID)
 
 	// Add relationship
 	relReq := &pb.AddRelationshipRequest{
@@ -2226,9 +2293,9 @@ func TestServerIntegration_MGetRelationships(t *testing.T) {
 		Description: "Desc",
 		Weight:      1.0,
 	}
-	relResp, _ := sendCommand(conn, pb.CommandType_CMD_ADD_RELATIONSHIP, relReq)
+	relResp := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_RELATIONSHIP, relReq)
 	var relID pb.OkWithID
-	proto.Unmarshal(relResp.Payload, &relID)
+	mustUnmarshal(t, relResp.Payload, &relID)
 
 	// MGet relationships
 	mgetReq := &pb.MGetRelationshipsRequest{
@@ -2241,8 +2308,109 @@ func TestServerIntegration_MGetRelationships(t *testing.T) {
 
 	if mgetResp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(mgetResp.Payload, &errResp)
+		mustUnmarshal(t, mgetResp.Payload, &errResp)
 		t.Fatalf("MGet relationships returned error: %s", errResp.Message)
+	}
+}
+
+func TestServerIntegration_ListRelationships(t *testing.T) {
+	srv, addr := createTestServer(t)
+	defer srv.Stop()
+
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer closeSilently(conn)
+
+	embedding := make([]float32, testVectorDim)
+	ent1Req := &pb.AddEntityRequest{
+		ExternalId: "list-rel-ent1",
+		Title:      "List Rel Entity 1",
+		Type:       "test",
+		Embedding:  embedding,
+	}
+	resp1 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent1Req)
+	var ent1ID pb.OkWithID
+	mustUnmarshal(t, resp1.Payload, &ent1ID)
+
+	ent2Req := &pb.AddEntityRequest{
+		ExternalId: "list-rel-ent2",
+		Title:      "List Rel Entity 2",
+		Type:       "test",
+		Embedding:  embedding,
+	}
+	resp2 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent2Req)
+	var ent2ID pb.OkWithID
+	mustUnmarshal(t, resp2.Payload, &ent2ID)
+
+	ent3Req := &pb.AddEntityRequest{
+		ExternalId: "list-rel-ent3",
+		Title:      "List Rel Entity 3",
+		Type:       "test",
+		Embedding:  embedding,
+	}
+	resp3 := mustSendCommand(t, conn, pb.CommandType_CMD_ADD_ENTITY, ent3Req)
+	var ent3ID pb.OkWithID
+	mustUnmarshal(t, resp3.Payload, &ent3ID)
+
+	relReqs := []*pb.AddRelationshipRequest{
+		{ExternalId: "list-rel-1", SourceId: ent1ID.Id, TargetId: ent2ID.Id, Type: "RELATED", Description: "Desc", Weight: 1.0},
+		{ExternalId: "list-rel-2", SourceId: ent2ID.Id, TargetId: ent3ID.Id, Type: "RELATED", Description: "Desc", Weight: 1.0},
+		{ExternalId: "list-rel-3", SourceId: ent3ID.Id, TargetId: ent1ID.Id, Type: "RELATED", Description: "Desc", Weight: 1.0},
+	}
+	for _, relReq := range relReqs {
+		resp, err := sendCommand(conn, pb.CommandType_CMD_ADD_RELATIONSHIP, relReq)
+		if err != nil {
+			t.Fatalf("AddRelationship failed: %v", err)
+		}
+		if resp.CmdType == pb.CommandType_CMD_ERROR {
+			var errResp pb.Error
+			mustUnmarshal(t, resp.Payload, &errResp)
+			t.Fatalf("AddRelationship returned error: %s", errResp.Message)
+		}
+	}
+
+	var allIDs []uint64
+	var cursor uint64
+	for page := 0; page < 2; page++ {
+		listReq := &pb.ListRelationshipsRequest{Cursor: cursor, Limit: 2}
+		resp, err := sendCommand(conn, pb.CommandType_CMD_LIST_RELATIONSHIPS, listReq)
+		if err != nil {
+			t.Fatalf("List relationships failed: %v", err)
+		}
+		if resp.CmdType == pb.CommandType_CMD_ERROR {
+			var errResp pb.Error
+			mustUnmarshal(t, resp.Payload, &errResp)
+			t.Fatalf("List relationships returned error: %s", errResp.Message)
+		}
+
+		var listResp pb.RelationshipsResponse
+		if err := proto.Unmarshal(resp.Payload, &listResp); err != nil {
+			t.Fatalf("Failed to unmarshal list relationships response: %v", err)
+		}
+		if len(listResp.Relationships) == 0 {
+			t.Fatalf("Expected relationships on page %d", page+1)
+		}
+		if listResp.NextCursor != 0 && listResp.NextCursor != listResp.Relationships[len(listResp.Relationships)-1].Id {
+			t.Fatalf("Expected next cursor to match last relationship ID")
+		}
+
+		for i := range listResp.Relationships {
+			allIDs = append(allIDs, listResp.Relationships[i].Id)
+			if i > 0 && listResp.Relationships[i-1].Id >= listResp.Relationships[i].Id {
+				t.Fatalf("Expected ascending IDs on page %d", page+1)
+			}
+		}
+
+		cursor = listResp.NextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if len(allIDs) != 3 {
+		t.Fatalf("Expected 3 relationships total, got %d", len(allIDs))
 	}
 }
 
@@ -2258,7 +2426,7 @@ func TestServerIntegration_BGSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	saveReq := &pb.SaveRequest{
 		Path: "/tmp/gibram_test_save",
@@ -2271,7 +2439,7 @@ func TestServerIntegration_BGSave(t *testing.T) {
 	// May return error if no snapshot callback is set
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("BGSave returned error (expected if no callback): %s", errResp.Message)
 	}
 }
@@ -2284,7 +2452,7 @@ func TestServerIntegration_Save(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	saveReq := &pb.SaveRequest{
 		Path: "/tmp/gibram_test_save_sync",
@@ -2297,7 +2465,7 @@ func TestServerIntegration_Save(t *testing.T) {
 	// May return error if no snapshot callback is set
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("Save returned error (expected if no callback): %s", errResp.Message)
 	}
 }
@@ -2310,7 +2478,7 @@ func TestServerIntegration_LastSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_LASTSAVE, nil)
 	if err != nil {
@@ -2319,7 +2487,7 @@ func TestServerIntegration_LastSave(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("LastSave returned error (expected if never saved): %s", errResp.Message)
 	}
 }
@@ -2332,7 +2500,7 @@ func TestServerIntegration_BGRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	restoreReq := &pb.RestoreRequest{
 		Path: "/nonexistent/path",
@@ -2345,7 +2513,7 @@ func TestServerIntegration_BGRestore(t *testing.T) {
 	// Should return error for nonexistent path
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("BGRestore returned error (expected): %s", errResp.Message)
 	}
 }
@@ -2358,7 +2526,7 @@ func TestServerIntegration_BackupStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_BACKUP_STATUS, nil)
 	if err != nil {
@@ -2367,7 +2535,7 @@ func TestServerIntegration_BackupStatus(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("BackupStatus returned error: %s", errResp.Message)
 	}
 }
@@ -2380,7 +2548,7 @@ func TestServerIntegration_WALStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_WAL_STATUS, nil)
 	if err != nil {
@@ -2389,7 +2557,7 @@ func TestServerIntegration_WALStatus(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("WALStatus returned error (expected if WAL not set): %s", errResp.Message)
 	}
 }
@@ -2402,7 +2570,7 @@ func TestServerIntegration_RebuildIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_REBUILD_INDEX, nil)
 	if err != nil {
@@ -2411,7 +2579,7 @@ func TestServerIntegration_RebuildIndex(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("RebuildIndex returned error: %s", errResp.Message)
 	}
 }
@@ -2424,7 +2592,7 @@ func TestServerIntegration_WALCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_WAL_CHECKPOINT, nil)
 	if err != nil {
@@ -2433,7 +2601,7 @@ func TestServerIntegration_WALCheckpoint(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("WALCheckpoint returned error (expected if WAL not set): %s", errResp.Message)
 	}
 }
@@ -2446,7 +2614,7 @@ func TestServerIntegration_WALTruncate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	truncReq := &pb.WALTruncateRequest{
 		TargetLsn: 100,
@@ -2458,7 +2626,7 @@ func TestServerIntegration_WALTruncate(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("WALTruncate returned error (expected if WAL not set): %s", errResp.Message)
 	}
 }
@@ -2471,7 +2639,7 @@ func TestServerIntegration_WALRotate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_WAL_ROTATE, nil)
 	if err != nil {
@@ -2480,7 +2648,7 @@ func TestServerIntegration_WALRotate(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("WALRotate returned error (expected if WAL not set): %s", errResp.Message)
 	}
 }
@@ -2497,7 +2665,7 @@ func TestServerIntegration_Pipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	embedding := make([]float32, testVectorDim)
 
@@ -2534,7 +2702,7 @@ func TestServerIntegration_Pipeline(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Pipeline returned error: %s", errResp.Message)
 	}
 
@@ -2593,7 +2761,7 @@ func createTestServerWithAuth(t *testing.T) (*Server, string, string) {
 		t.Fatalf("Failed to find available port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	closeSilently(ln)
 
 	// Start server
 	if err := srv.Start(addr); err != nil {
@@ -2611,7 +2779,7 @@ func TestServerIntegration_WithAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// First authenticate
 	authReq := &pb.AuthRequest{
@@ -2624,7 +2792,7 @@ func TestServerIntegration_WithAuthentication(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Auth returned error: %s", errResp.Message)
 	}
 
@@ -2656,7 +2824,7 @@ func TestServerIntegration_AuthWrongKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Try to authenticate with wrong key
 	authReq := &pb.AuthRequest{
@@ -2670,7 +2838,7 @@ func TestServerIntegration_AuthWrongKey(t *testing.T) {
 	// Should fail
 	if resp.CmdType == pb.CommandType_CMD_AUTH_RESPONSE {
 		var authResp pb.AuthResponse
-		proto.Unmarshal(resp.Payload, &authResp)
+		mustUnmarshal(t, resp.Payload, &authResp)
 		if authResp.Success {
 			t.Error("Auth should fail with wrong key")
 		}
@@ -2709,7 +2877,7 @@ func createTestServerWithBackupAsync(t *testing.T) (*Server, string, *sync.WaitG
 		t.Fatalf("Failed to find available port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	closeSilently(ln)
 
 	// Start server
 	if err := srv.Start(addr); err != nil {
@@ -2741,7 +2909,7 @@ func createTestServerWithBackupSync(t *testing.T) (*Server, string) {
 		t.Fatalf("Failed to find available port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	closeSilently(ln)
 
 	// Start server
 	if err := srv.Start(addr); err != nil {
@@ -2759,7 +2927,7 @@ func TestServerIntegration_BGSaveWithCallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	wg.Add(1)
 	saveReq := &pb.SaveRequest{
@@ -2772,7 +2940,7 @@ func TestServerIntegration_BGSaveWithCallback(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("BGSave returned error: %s", errResp.Message)
 	}
 
@@ -2789,7 +2957,7 @@ func TestServerIntegration_BGSaveWithCallback(t *testing.T) {
 
 	if statusResp.CmdType == pb.CommandType_CMD_BACKUP_RESPONSE {
 		var status pb.BackupStatusResponse
-		proto.Unmarshal(statusResp.Payload, &status)
+		mustUnmarshal(t, statusResp.Payload, &status)
 		if status.InProgress {
 			t.Error("Backup should no longer be in progress")
 		}
@@ -2804,7 +2972,7 @@ func TestServerIntegration_SaveWithCallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	saveReq := &pb.SaveRequest{
 		Path: "/tmp/gibram_test_save_sync",
@@ -2816,7 +2984,7 @@ func TestServerIntegration_SaveWithCallback(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Save returned error: %s", errResp.Message)
 	}
 
@@ -2828,7 +2996,7 @@ func TestServerIntegration_SaveWithCallback(t *testing.T) {
 
 	if lastResp.CmdType == pb.CommandType_CMD_BACKUP_RESPONSE {
 		var lastSave pb.LastSaveResponse
-		proto.Unmarshal(lastResp.Payload, &lastSave)
+		mustUnmarshal(t, lastResp.Payload, &lastSave)
 		if lastSave.Timestamp == 0 {
 			t.Error("Expected non-zero timestamp after save")
 		}
@@ -2846,7 +3014,7 @@ func TestServerIntegration_BGRestoreWithCallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	wg.Add(1)
 	restoreReq := &pb.RestoreRequest{
@@ -2859,7 +3027,7 @@ func TestServerIntegration_BGRestoreWithCallback(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("BGRestore returned error: %s", errResp.Message)
 	}
 
@@ -2875,7 +3043,7 @@ func TestServerIntegration_BGSaveAlreadyInProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Start first backup
 	wg.Add(1)
@@ -2889,7 +3057,7 @@ func TestServerIntegration_BGSaveAlreadyInProgress(t *testing.T) {
 
 	if resp1.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp1.Payload, &errResp)
+		mustUnmarshal(t, resp1.Payload, &errResp)
 		t.Fatalf("First BGSave returned error: %s", errResp.Message)
 	}
 
@@ -2932,7 +3100,7 @@ func createTestServerWithWAL(t *testing.T) (*Server, string, string) {
 		t.Fatalf("Failed to find available port: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	closeSilently(ln)
 
 	// Start server
 	if err := srv.Start(addr); err != nil {
@@ -2950,7 +3118,7 @@ func TestServerIntegration_WALStatusWithWAL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_WAL_STATUS, nil)
 	if err != nil {
@@ -2959,7 +3127,7 @@ func TestServerIntegration_WALStatusWithWAL(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("WALStatus returned error: %s", errResp.Message)
 	}
 
@@ -2982,7 +3150,7 @@ func TestServerIntegration_WALCheckpointWithWAL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_WAL_CHECKPOINT, nil)
 	if err != nil {
@@ -2991,7 +3159,7 @@ func TestServerIntegration_WALCheckpointWithWAL(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("WALCheckpoint returned error: %s", errResp.Message)
 	}
 }
@@ -3004,7 +3172,7 @@ func TestServerIntegration_WALRotateWithWAL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_WAL_ROTATE, nil)
 	if err != nil {
@@ -3013,7 +3181,7 @@ func TestServerIntegration_WALRotateWithWAL(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("WALRotate returned error: %s", errResp.Message)
 	}
 }
@@ -3026,7 +3194,7 @@ func TestServerIntegration_WALTruncateWithWAL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_WAL_TRUNCATE, nil)
 	if err != nil {
@@ -3035,7 +3203,7 @@ func TestServerIntegration_WALTruncateWithWAL(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("WALTruncate returned error: %s", errResp.Message)
 	}
 }
@@ -3052,7 +3220,7 @@ func TestServerIntegration_UnsupportedCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Send an unsupported/unknown command type (using a high number)
 	resp, err := sendCommand(conn, pb.CommandType(9999), nil)
@@ -3078,7 +3246,7 @@ func TestServerIntegration_InvalidPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Send invalid protobuf payload - should cause unmarshal error
 	env := &pb.Envelope{
@@ -3088,11 +3256,19 @@ func TestServerIntegration_InvalidPayload(t *testing.T) {
 		Payload:   []byte("invalid protobuf data"),
 	}
 
-	frameData, _ := codec.EncodeEnvelope(env)
-	conn.Write(frameData)
+	frameData, err := codec.EncodeEnvelope(env)
+	if err != nil {
+		t.Fatalf("Failed to encode envelope: %v", err)
+	}
+	if _, err := conn.Write(frameData); err != nil {
+		t.Fatalf("Failed to write frame: %v", err)
+	}
 
 	// Read response
-	resp, _, _ := codec.DecodeEnvelope(conn)
+	resp, _, err := codec.DecodeEnvelope(conn)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
 	// Server should handle gracefully (may return error or process with defaults)
 	if resp != nil {
 		t.Logf("Response type: %v", resp.CmdType)
@@ -3107,7 +3283,7 @@ func TestServerIntegration_GetNonExistentEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Try to get entity that doesn't exist
 	getReq := &pb.GetByIDRequest{
@@ -3132,7 +3308,7 @@ func TestServerIntegration_DeleteNonExistentEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Try to delete entity that doesn't exist
 	delReq := &pb.DeleteByIDRequest{
@@ -3157,7 +3333,7 @@ func TestServerIntegration_GetNonExistentDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Try to get document that doesn't exist
 	getReq := &pb.GetByIDRequest{
@@ -3182,7 +3358,7 @@ func TestServerIntegration_DeleteNonExistentDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Try to delete document that doesn't exist
 	delReq := &pb.DeleteByIDRequest{
@@ -3207,7 +3383,7 @@ func TestServerIntegration_GetNonExistentTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	getReq := &pb.GetByIDRequest{
 		Id: 999999,
@@ -3230,7 +3406,7 @@ func TestServerIntegration_DeleteNonExistentTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	delReq := &pb.DeleteByIDRequest{
 		Id: 999999,
@@ -3253,7 +3429,7 @@ func TestServerIntegration_GetNonExistentRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	getReq := &pb.GetByIDRequest{
 		Id: 999999,
@@ -3276,7 +3452,7 @@ func TestServerIntegration_DeleteNonExistentRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	delReq := &pb.DeleteByIDRequest{
 		Id: 999999,
@@ -3299,7 +3475,7 @@ func TestServerIntegration_GetNonExistentCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	getReq := &pb.GetByIDRequest{
 		Id: 999999,
@@ -3322,7 +3498,7 @@ func TestServerIntegration_DeleteNonExistentCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	delReq := &pb.GetByIDRequest{
 		Id: 999999,
@@ -3345,7 +3521,7 @@ func TestServerIntegration_LinkInvalidTextUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Try to link non-existent text unit to non-existent entity
 	linkReq := &pb.LinkTextUnitEntityRequest{
@@ -3370,7 +3546,7 @@ func TestServerIntegration_UpdateNonExistentEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Try to update non-existent entity
 	updateReq := &pb.UpdateEntityDescRequest{
@@ -3395,7 +3571,7 @@ func TestServerIntegration_HealthWithBackup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	resp, err := sendCommand(conn, pb.CommandType_CMD_HEALTH, nil)
 	if err != nil {
@@ -3404,7 +3580,7 @@ func TestServerIntegration_HealthWithBackup(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Fatalf("Health check returned error: %s", errResp.Message)
 	}
 
@@ -3429,7 +3605,7 @@ func TestServerIntegration_RebuildIndexError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Rebuild index on empty engine should work
 	resp, err := sendCommand(conn, pb.CommandType_CMD_REBUILD_INDEX, nil)
@@ -3439,7 +3615,7 @@ func TestServerIntegration_RebuildIndexError(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("Rebuild index returned error (may be expected): %s", errResp.Message)
 	}
 }
@@ -3456,7 +3632,7 @@ func TestServerIntegration_SetTTLInvalidType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// First add an entity
 	embedding := make([]float32, testVectorDim)
@@ -3472,7 +3648,7 @@ func TestServerIntegration_SetTTLInvalidType(t *testing.T) {
 	}
 
 	var entityId pb.Entity
-	proto.Unmarshal(addResp.Payload, &entityId)
+	mustUnmarshal(t, addResp.Payload, &entityId)
 
 	// Try to set idle TTL
 	idleTTLReq := &pb.SetIdleTTLRequest{
@@ -3487,7 +3663,7 @@ func TestServerIntegration_SetTTLInvalidType(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("SetIdleTTL returned error: %s", errResp.Message)
 	}
 }
@@ -3501,7 +3677,7 @@ func TestServerIntegration_QueryWithFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add some entities first
 	embedding := make([]float32, testVectorDim)
@@ -3531,7 +3707,7 @@ func TestServerIntegration_QueryWithFilters(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_QUERY_RESPONSE {
 		var queryResp pb.QueryResponse
-		proto.Unmarshal(resp.Payload, &queryResp)
+		mustUnmarshal(t, resp.Payload, &queryResp)
 		if len(queryResp.Entities) < 3 {
 			t.Logf("Expected at least 3 entity results, got %d", len(queryResp.Entities))
 		}
@@ -3546,7 +3722,7 @@ func TestServerIntegration_ExplainWithQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add some entities
 	embedding := make([]float32, testVectorDim)
@@ -3574,11 +3750,11 @@ func TestServerIntegration_ExplainWithQuery(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("Explain returned error: %s", errResp.Message)
 	} else {
 		var explainResp pb.ExplainResponse
-		proto.Unmarshal(resp.Payload, &explainResp)
+		mustUnmarshal(t, resp.Payload, &explainResp)
 		t.Logf("Explain returned %d seeds and %d traversal steps", len(explainResp.Seeds), len(explainResp.Traversal))
 	}
 }
@@ -3591,7 +3767,7 @@ func TestServerIntegration_HierarchicalLeidenWithData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer closeSilently(conn)
 
 	// Add entities and relationships for community detection
 	embedding := make([]float32, testVectorDim)
@@ -3610,7 +3786,7 @@ func TestServerIntegration_HierarchicalLeidenWithData(t *testing.T) {
 			t.Fatalf("Add entity failed: %v", err)
 		}
 		var entityResp pb.Entity
-		proto.Unmarshal(resp.Payload, &entityResp)
+		mustUnmarshal(t, resp.Payload, &entityResp)
 		entityIDs = append(entityIDs, entityResp.Id)
 	}
 
@@ -3640,11 +3816,11 @@ func TestServerIntegration_HierarchicalLeidenWithData(t *testing.T) {
 
 	if resp.CmdType == pb.CommandType_CMD_ERROR {
 		var errResp pb.Error
-		proto.Unmarshal(resp.Payload, &errResp)
+		mustUnmarshal(t, resp.Payload, &errResp)
 		t.Logf("Hierarchical Leiden returned error (may be expected for small graph): %s", errResp.Message)
 	} else {
 		var leidenResp pb.HierarchicalLeidenResponse
-		proto.Unmarshal(resp.Payload, &leidenResp)
+		mustUnmarshal(t, resp.Payload, &leidenResp)
 		t.Logf("Hierarchical Leiden found %d total communities", leidenResp.TotalCommunities)
 	}
 }

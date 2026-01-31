@@ -2,6 +2,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -121,7 +122,7 @@ func TestAddDocumentDuplicate(t *testing.T) {
 func TestGetDocument(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
-	doc, _ := store.AddDocument("doc-001", "test.pdf")
+	doc := mustAddDocument(t, store, "doc-001", "test.pdf")
 
 	// Get by ID
 	retrieved, ok := store.GetDocument(doc.ID)
@@ -143,7 +144,7 @@ func TestGetDocument(t *testing.T) {
 func TestGetDocumentByExternalID(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
-	store.AddDocument("doc-001", "test.pdf")
+	mustAddDocument(t, store, "doc-001", "test.pdf")
 
 	doc, ok := store.GetDocumentByExternalID("doc-001")
 	if !ok {
@@ -164,7 +165,7 @@ func TestGetDocumentByExternalID(t *testing.T) {
 func TestDeleteDocument(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
-	doc, _ := store.AddDocument("doc-001", "test.pdf")
+	doc := mustAddDocument(t, store, "doc-001", "test.pdf")
 
 	// Delete
 	ok := store.DeleteDocument(doc.ID)
@@ -192,9 +193,9 @@ func TestDeleteDocument(t *testing.T) {
 func TestGetAllDocuments(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
-	store.AddDocument("doc-001", "test1.pdf")
-	store.AddDocument("doc-002", "test2.pdf")
-	store.AddDocument("doc-003", "test3.pdf")
+	mustAddDocument(t, store, "doc-001", "test1.pdf")
+	mustAddDocument(t, store, "doc-002", "test2.pdf")
+	mustAddDocument(t, store, "doc-003", "test3.pdf")
 
 	docs := store.GetAllDocuments()
 	if len(docs) != 3 {
@@ -209,7 +210,7 @@ func TestGetAllDocuments(t *testing.T) {
 func TestAddTextUnit(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
-	doc, _ := store.AddDocument("doc-001", "test.pdf")
+	doc := mustAddDocument(t, store, "doc-001", "test.pdf")
 
 	embedding := make([]float32, testVectorDim)
 	for i := range embedding {
@@ -241,7 +242,7 @@ func TestAddTextUnit(t *testing.T) {
 func TestAddTextUnitDuplicate(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
-	doc, _ := store.AddDocument("doc-001", "test.pdf")
+	doc := mustAddDocument(t, store, "doc-001", "test.pdf")
 	embedding := make([]float32, testVectorDim)
 
 	_, err := store.AddTextUnit("tu-001", doc.ID, "Content 1", embedding, 5)
@@ -259,9 +260,9 @@ func TestAddTextUnitDuplicate(t *testing.T) {
 func TestGetTextUnit(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
-	doc, _ := store.AddDocument("doc-001", "test.pdf")
+	doc := mustAddDocument(t, store, "doc-001", "test.pdf")
 	embedding := make([]float32, testVectorDim)
-	tu, _ := store.AddTextUnit("tu-001", doc.ID, "Test content", embedding, 5)
+	tu := mustAddTextUnit(t, store, "tu-001", doc.ID, "Test content", embedding, 5)
 
 	// Get by ID
 	retrieved, ok := store.GetTextUnit(tu.ID)
@@ -283,9 +284,9 @@ func TestGetTextUnit(t *testing.T) {
 func TestDeleteTextUnit(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
-	doc, _ := store.AddDocument("doc-001", "test.pdf")
+	doc := mustAddDocument(t, store, "doc-001", "test.pdf")
 	embedding := make([]float32, testVectorDim)
-	tu, _ := store.AddTextUnit("tu-001", doc.ID, "Test content", embedding, 5)
+	tu := mustAddTextUnit(t, store, "tu-001", doc.ID, "Test content", embedding, 5)
 
 	// Delete
 	ok := store.DeleteTextUnit(tu.ID)
@@ -360,7 +361,7 @@ func TestGetEntity(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	entity, _ := store.AddEntity("ent-001", "Test Entity", "person", "Description", embedding)
+	entity := mustAddEntity(t, store, "ent-001", "Test Entity", "person", "Description", embedding)
 
 	// Get by ID
 	retrieved, ok := store.GetEntity(entity.ID)
@@ -384,7 +385,7 @@ func TestGetEntityByTitle(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	store.AddEntity("ent-001", "Test Entity", "person", "Description", embedding)
+	mustAddEntity(t, store, "ent-001", "Test Entity", "person", "Description", embedding)
 
 	entity, ok := store.GetEntityByTitle("Test Entity")
 	if !ok {
@@ -406,7 +407,7 @@ func TestUpdateEntityDescription(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	entity, _ := store.AddEntity("ent-001", "Test Entity", "person", "Original description", embedding)
+	entity := mustAddEntity(t, store, "ent-001", "Test Entity", "person", "Original description", embedding)
 
 	// Update description
 	newEmbedding := make([]float32, testVectorDim)
@@ -431,7 +432,7 @@ func TestDeleteEntity(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	entity, _ := store.AddEntity("ent-001", "Test Entity", "person", "Description", embedding)
+	entity := mustAddEntity(t, store, "ent-001", "Test Entity", "person", "Description", embedding)
 
 	// Delete
 	ok := store.DeleteEntity(entity.ID)
@@ -450,6 +451,48 @@ func TestDeleteEntity(t *testing.T) {
 	}
 }
 
+func TestListEntitiesPagination(t *testing.T) {
+	store := NewSessionStore("test-session", testVectorDim)
+
+	for i := 0; i < 5; i++ {
+		extID := fmt.Sprintf("ent-%d", i+1)
+		title := fmt.Sprintf("Entity %d", i+1)
+		if _, err := store.AddEntity(extID, title, "person", "desc", nil); err != nil {
+			t.Fatalf("AddEntity failed: %v", err)
+		}
+	}
+
+	entities, next := store.ListEntities(0, 2)
+	if len(entities) != 2 {
+		t.Fatalf("Expected 2 entities, got %d", len(entities))
+	}
+	if next == 0 {
+		t.Fatalf("Expected non-zero next cursor")
+	}
+	if entities[0].ID >= entities[1].ID {
+		t.Errorf("Expected ascending IDs, got %d then %d", entities[0].ID, entities[1].ID)
+	}
+	if next != entities[len(entities)-1].ID {
+		t.Errorf("Expected next cursor %d, got %d", entities[len(entities)-1].ID, next)
+	}
+
+	entities2, next2 := store.ListEntities(next, 2)
+	if len(entities2) != 2 {
+		t.Fatalf("Expected 2 entities, got %d", len(entities2))
+	}
+	if next2 == 0 {
+		t.Fatalf("Expected non-zero next cursor for page 2")
+	}
+
+	entities3, next3 := store.ListEntities(next2, 2)
+	if len(entities3) != 1 {
+		t.Fatalf("Expected 1 entity, got %d", len(entities3))
+	}
+	if next3 != 0 {
+		t.Fatalf("Expected next cursor 0 at end, got %d", next3)
+	}
+}
+
 // =============================================================================
 // Relationship Operations Tests
 // =============================================================================
@@ -458,8 +501,8 @@ func TestAddRelationship(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	e2, _ := store.AddEntity("ent-002", "Entity 2", "person", "Desc", embedding)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc", embedding)
 
 	rel, err := store.AddRelationship("rel-001", e1.ID, e2.ID, "KNOWS", "They know each other", 1.0)
 	if err != nil {
@@ -487,8 +530,8 @@ func TestAddRelationshipDuplicate(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	e2, _ := store.AddEntity("ent-002", "Entity 2", "person", "Desc", embedding)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc", embedding)
 
 	_, err := store.AddRelationship("rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
 	if err != nil {
@@ -506,9 +549,9 @@ func TestGetRelationship(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	e2, _ := store.AddEntity("ent-002", "Entity 2", "person", "Desc", embedding)
-	rel, _ := store.AddRelationship("rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc", embedding)
+	rel := mustAddRelationship(t, store, "rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
 
 	// Get by ID
 	retrieved, ok := store.GetRelationship(rel.ID)
@@ -531,9 +574,9 @@ func TestDeleteRelationship(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	e2, _ := store.AddEntity("ent-002", "Entity 2", "person", "Desc", embedding)
-	rel, _ := store.AddRelationship("rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc", embedding)
+	rel := mustAddRelationship(t, store, "rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
 
 	// Delete
 	ok := store.DeleteRelationship(rel.ID)
@@ -552,16 +595,57 @@ func TestDeleteRelationship(t *testing.T) {
 	}
 }
 
+func TestListRelationshipsPagination(t *testing.T) {
+	store := NewSessionStore("test-session", testVectorDim)
+
+	embedding := make([]float32, testVectorDim)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc", embedding)
+	e3 := mustAddEntity(t, store, "ent-003", "Entity 3", "person", "Desc", embedding)
+
+	if _, err := store.AddRelationship("rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0); err != nil {
+		t.Fatalf("AddRelationship failed: %v", err)
+	}
+	if _, err := store.AddRelationship("rel-002", e2.ID, e3.ID, "KNOWS", "Desc", 1.0); err != nil {
+		t.Fatalf("AddRelationship failed: %v", err)
+	}
+	if _, err := store.AddRelationship("rel-003", e3.ID, e1.ID, "KNOWS", "Desc", 1.0); err != nil {
+		t.Fatalf("AddRelationship failed: %v", err)
+	}
+
+	rels, next := store.ListRelationships(0, 2)
+	if len(rels) != 2 {
+		t.Fatalf("Expected 2 relationships, got %d", len(rels))
+	}
+	if next == 0 {
+		t.Fatalf("Expected non-zero next cursor")
+	}
+	if rels[0].ID >= rels[1].ID {
+		t.Errorf("Expected ascending IDs, got %d then %d", rels[0].ID, rels[1].ID)
+	}
+	if next != rels[len(rels)-1].ID {
+		t.Errorf("Expected next cursor %d, got %d", rels[len(rels)-1].ID, next)
+	}
+
+	rels2, next2 := store.ListRelationships(next, 2)
+	if len(rels2) != 1 {
+		t.Fatalf("Expected 1 relationship, got %d", len(rels2))
+	}
+	if next2 != 0 {
+		t.Fatalf("Expected next cursor 0 at end, got %d", next2)
+	}
+}
+
 func TestGetOutgoingEdges(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	e2, _ := store.AddEntity("ent-002", "Entity 2", "person", "Desc", embedding)
-	e3, _ := store.AddEntity("ent-003", "Entity 3", "person", "Desc", embedding)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc", embedding)
+	e3 := mustAddEntity(t, store, "ent-003", "Entity 3", "person", "Desc", embedding)
 
-	store.AddRelationship("rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
-	store.AddRelationship("rel-002", e1.ID, e3.ID, "KNOWS", "Desc", 1.0)
+	mustAddRelationship(t, store, "rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
+	mustAddRelationship(t, store, "rel-002", e1.ID, e3.ID, "KNOWS", "Desc", 1.0)
 
 	rels := store.GetOutgoingRelationships(e1.ID)
 	if len(rels) != 2 {
@@ -573,12 +657,12 @@ func TestGetIncomingEdges(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	e2, _ := store.AddEntity("ent-002", "Entity 2", "person", "Desc", embedding)
-	e3, _ := store.AddEntity("ent-003", "Entity 3", "person", "Desc", embedding)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc", embedding)
+	e3 := mustAddEntity(t, store, "ent-003", "Entity 3", "person", "Desc", embedding)
 
-	store.AddRelationship("rel-001", e1.ID, e3.ID, "KNOWS", "Desc", 1.0)
-	store.AddRelationship("rel-002", e2.ID, e3.ID, "KNOWS", "Desc", 1.0)
+	mustAddRelationship(t, store, "rel-001", e1.ID, e3.ID, "KNOWS", "Desc", 1.0)
+	mustAddRelationship(t, store, "rel-002", e2.ID, e3.ID, "KNOWS", "Desc", 1.0)
 
 	rels := store.GetIncomingRelationships(e3.ID)
 	if len(rels) != 2 {
@@ -594,8 +678,8 @@ func TestAddCommunity(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	e2, _ := store.AddEntity("ent-002", "Entity 2", "person", "Desc", embedding)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc", embedding)
 
 	comm, err := store.AddCommunity("comm-001", "Test Community", "Summary", "Full content", 0, []uint64{e1.ID, e2.ID}, []uint64{}, embedding)
 	if err != nil {
@@ -623,8 +707,8 @@ func TestGetCommunity(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	comm, _ := store.AddCommunity("comm-001", "Test Community", "Summary", "Full content", 0, []uint64{e1.ID}, []uint64{}, embedding)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	comm := mustAddCommunity(t, store, "comm-001", "Test Community", "Summary", "Full content", 0, []uint64{e1.ID}, []uint64{}, embedding)
 
 	// Get by ID
 	retrieved, ok := store.GetCommunity(comm.ID)
@@ -647,8 +731,8 @@ func TestDeleteCommunity(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	embedding := make([]float32, testVectorDim)
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc", embedding)
-	comm, _ := store.AddCommunity("comm-001", "Test Community", "Summary", "Full content", 0, []uint64{e1.ID}, []uint64{}, embedding)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc", embedding)
+	comm := mustAddCommunity(t, store, "comm-001", "Test Community", "Summary", "Full content", 0, []uint64{e1.ID}, []uint64{}, embedding)
 
 	// Delete
 	ok := store.DeleteCommunity(comm.ID)
@@ -750,10 +834,10 @@ func TestConcurrentDocumentOperations(t *testing.T) {
 	// Concurrent adds
 	for i := 0; i < numOps; i++ {
 		go func(id int) {
-			extID := string(rune('A' + (id % 26))) + string(rune('0' + (id / 26)))
+			extID := string(rune('A'+(id%26))) + string(rune('0'+(id/26)))
 			_, err := store.AddDocument(extID, "test.pdf")
 			if err != nil {
-				// Duplicates are expected with random IDs
+				t.Logf("Duplicate document: %v", err)
 			}
 			done <- true
 		}(i)
@@ -779,11 +863,11 @@ func TestConcurrentEntityOperations(t *testing.T) {
 	// Concurrent adds
 	for i := 0; i < numOps; i++ {
 		go func(id int) {
-			extID := string(rune('A' + (id % 26))) + string(rune('0' + (id / 26)))
+			extID := string(rune('A'+(id%26))) + string(rune('0'+(id/26)))
 			embedding := make([]float32, testVectorDim)
 			_, err := store.AddEntity(extID, "Entity "+extID, "person", "Desc", embedding)
 			if err != nil {
-				// Duplicates are expected
+				t.Logf("Duplicate entity: %v", err)
 			}
 			done <- true
 		}(i)
@@ -808,27 +892,27 @@ func TestCompleteWorkflow(t *testing.T) {
 	store := NewSessionStore("test-session", testVectorDim)
 
 	// Add documents
-	doc1, _ := store.AddDocument("doc-001", "test1.pdf")
-	doc2, _ := store.AddDocument("doc-002", "test2.pdf")
+	doc1 := mustAddDocument(t, store, "doc-001", "test1.pdf")
+	doc2 := mustAddDocument(t, store, "doc-002", "test2.pdf")
 
 	// Add text units
 	embedding := make([]float32, testVectorDim)
-	tu1, _ := store.AddTextUnit("tu-001", doc1.ID, "Content 1", embedding, 5)
-	tu2, _ := store.AddTextUnit("tu-002", doc2.ID, "Content 2", embedding, 5)
+	tu1 := mustAddTextUnit(t, store, "tu-001", doc1.ID, "Content 1", embedding, 5)
+	tu2 := mustAddTextUnit(t, store, "tu-002", doc2.ID, "Content 2", embedding, 5)
 
 	// Add entities
-	e1, _ := store.AddEntity("ent-001", "Entity 1", "person", "Desc 1", embedding)
-	e2, _ := store.AddEntity("ent-002", "Entity 2", "person", "Desc 2", embedding)
+	e1 := mustAddEntity(t, store, "ent-001", "Entity 1", "person", "Desc 1", embedding)
+	e2 := mustAddEntity(t, store, "ent-002", "Entity 2", "person", "Desc 2", embedding)
 
 	// Link text units to entities
 	store.LinkTextUnitToEntity(tu1.ID, e1.ID)
 	store.LinkTextUnitToEntity(tu2.ID, e2.ID)
 
 	// Add relationship
-	rel, _ := store.AddRelationship("rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
+	rel := mustAddRelationship(t, store, "rel-001", e1.ID, e2.ID, "KNOWS", "Desc", 1.0)
 
 	// Add community
-	comm, _ := store.AddCommunity("comm-001", "Community 1", "Summary", "Full content", 0, []uint64{e1.ID, e2.ID}, []uint64{rel.ID}, embedding)
+	comm := mustAddCommunity(t, store, "comm-001", "Community 1", "Summary", "Full content", 0, []uint64{e1.ID, e2.ID}, []uint64{rel.ID}, embedding)
 
 	// Verify counts
 	info := store.GetInfo()

@@ -272,7 +272,9 @@ func (s *Server) Start(addr string) error {
 func (s *Server) Stop() {
 	close(s.stopCh)
 	if s.listener != nil {
-		s.listener.Close()
+		if err := s.listener.Close(); err != nil {
+			logging.Error("Listener close error: %v", err)
+		}
 	}
 	s.wg.Wait()
 }
@@ -303,14 +305,21 @@ type connState struct {
 
 func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			logging.Error("Connection close error: %v", err)
+		}
+	}()
 
 	reader := bufio.NewReader(conn)
 	state := &connState{}
 
 	// If auth is required, set short timeout for unauthenticated connections
 	if s.apiKeyStore != nil {
-		conn.SetDeadline(time.Now().Add(s.unauthTimeout))
+		if err := conn.SetDeadline(time.Now().Add(s.unauthTimeout)); err != nil {
+			logging.Error("Set deadline error: %v", err)
+			return
+		}
 	}
 
 	for {
@@ -318,6 +327,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		case <-s.stopCh:
 			return
 		default:
+			_ = 0
 		}
 
 		// Read envelope
@@ -339,7 +349,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 					CmdType:   pb.CommandType_CMD_ERROR,
 					Payload:   s.errorPayload("authentication required"),
 				}
-				s.writeEnvelope(conn, response)
+				if err := s.writeEnvelope(conn, response); err != nil {
+					logging.Error("Write auth required response error: %v", err)
+				}
 				return
 			}
 
@@ -356,7 +368,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 
 			// Auth succeeded, extend deadline
-			conn.SetDeadline(time.Now().Add(s.idleTimeout))
+			if err := conn.SetDeadline(time.Now().Add(s.idleTimeout)); err != nil {
+				logging.Error("Set deadline error: %v", err)
+				return
+			}
 			continue
 		}
 
@@ -368,13 +383,19 @@ func (s *Server) handleConnection(conn net.Conn) {
 				CmdType:   pb.CommandType_CMD_ERROR,
 				Payload:   s.errorPayload("rate limit exceeded"),
 			}
-			s.writeEnvelope(conn, response)
+			if err := s.writeEnvelope(conn, response); err != nil {
+				logging.Error("Write rate limit response error: %v", err)
+				return
+			}
 			continue
 		}
 
 		// Reset idle timeout
 		if state.authenticated {
-			conn.SetDeadline(time.Now().Add(s.idleTimeout))
+			if err := conn.SetDeadline(time.Now().Add(s.idleTimeout)); err != nil {
+				logging.Error("Set deadline error: %v", err)
+				return
+			}
 		}
 
 		// Process and send response
@@ -662,6 +683,12 @@ func (s *Server) processEnvelope(env *pb.Envelope, state *connState) *pb.Envelop
 	case pb.CommandType_CMD_MGET_RELATIONSHIPS:
 		response.CmdType, response.Payload = s.handleMGetRelationships(env)
 
+	case pb.CommandType_CMD_LIST_ENTITIES:
+		response.CmdType, response.Payload = s.handleListEntities(env)
+
+	case pb.CommandType_CMD_LIST_RELATIONSHIPS:
+		response.CmdType, response.Payload = s.handleListRelationships(env)
+
 	// Pipeline (require session)
 	case pb.CommandType_CMD_PIPELINE:
 		response.CmdType, response.Payload = s.handlePipeline(env, state)
@@ -716,7 +743,12 @@ func (s *Server) handleInfo(env *pb.Envelope) []byte {
 	if env.SessionId != "" {
 		info, err := s.engine.InfoForSession(env.SessionId)
 		if err != nil {
-			return s.errorPayload(err.Error())
+			// Fallback to global info for missing/expired sessions to avoid error payloads
+			if err == engine.ErrSessionNotFound || err == engine.ErrSessionExpired {
+				info = s.engine.Info()
+			} else {
+				return s.errorPayload(err.Error())
+			}
 		}
 		resp := &pb.InfoResponse{
 			Version:           info.Version,
@@ -782,16 +814,16 @@ func (s *Server) handleListSessions() (pb.CommandType, []byte) {
 
 	for i, sess := range sessions {
 		resp.Sessions[i] = &pb.SessionInfo{
-			SessionId:        sess.ID,
-			CreatedAt:        sess.CreatedAt,
-			LastAccess:       sess.LastAccess,
-			Ttl:              sess.TTL,
-			IdleTtl:          sess.IdleTTL,
-			DocumentCount:    uint64(sess.DocumentCount),
-			TextunitCount:    uint64(sess.TextUnitCount),
-			EntityCount:      uint64(sess.EntityCount),
+			SessionId:         sess.ID,
+			CreatedAt:         sess.CreatedAt,
+			LastAccess:        sess.LastAccess,
+			Ttl:               sess.TTL,
+			IdleTtl:           sess.IdleTTL,
+			DocumentCount:     uint64(sess.DocumentCount),
+			TextunitCount:     uint64(sess.TextUnitCount),
+			EntityCount:       uint64(sess.EntityCount),
 			RelationshipCount: uint64(sess.RelationshipCount),
-			CommunityCount:   uint64(sess.CommunityCount),
+			CommunityCount:    uint64(sess.CommunityCount),
 		}
 	}
 
@@ -1533,6 +1565,38 @@ func (s *Server) handleMGetEntities(env *pb.Envelope) (pb.CommandType, []byte) {
 	return pb.CommandType_CMD_ENTITIES_RESPONSE, data
 }
 
+func (s *Server) handleListEntities(env *pb.Envelope) (pb.CommandType, []byte) {
+	sessionID, err := s.getSessionID(env)
+	if err != nil {
+		return pb.CommandType_CMD_ERROR, s.errorPayload(err.Error())
+	}
+
+	var req pb.ListEntitiesRequest
+	if err := proto.Unmarshal(env.Payload, &req); err != nil {
+		return pb.CommandType_CMD_ERROR, s.errorPayload(err.Error())
+	}
+
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+
+	entities, nextCursor := s.engine.ListEntities(sessionID, req.Cursor, limit)
+	resp := &pb.EntitiesResponse{
+		Entities:   make([]*pb.Entity, len(entities)),
+		NextCursor: nextCursor,
+	}
+	for i, ent := range entities {
+		resp.Entities[i] = codec.EntityToProto(ent)
+	}
+
+	data, _ := proto.Marshal(resp)
+	return pb.CommandType_CMD_ENTITIES_RESPONSE, data
+}
+
 func (s *Server) handleMSetDocuments(env *pb.Envelope) (pb.CommandType, []byte) {
 	sessionID, err := s.getSessionID(env)
 	if err != nil {
@@ -1696,6 +1760,38 @@ func (s *Server) handleMGetRelationships(env *pb.Envelope) (pb.CommandType, []by
 	return pb.CommandType_CMD_RELATIONSHIPS_RESPONSE, data
 }
 
+func (s *Server) handleListRelationships(env *pb.Envelope) (pb.CommandType, []byte) {
+	sessionID, err := s.getSessionID(env)
+	if err != nil {
+		return pb.CommandType_CMD_ERROR, s.errorPayload(err.Error())
+	}
+
+	var req pb.ListRelationshipsRequest
+	if err := proto.Unmarshal(env.Payload, &req); err != nil {
+		return pb.CommandType_CMD_ERROR, s.errorPayload(err.Error())
+	}
+
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+
+	rels, nextCursor := s.engine.ListRelationships(sessionID, req.Cursor, limit)
+	resp := &pb.RelationshipsResponse{
+		Relationships: make([]*pb.Relationship, len(rels)),
+		NextCursor:    nextCursor,
+	}
+	for i, rel := range rels {
+		resp.Relationships[i] = codec.RelationshipToProto(rel)
+	}
+
+	data, _ := proto.Marshal(resp)
+	return pb.CommandType_CMD_RELATIONSHIPS_RESPONSE, data
+}
+
 // =============================================================================
 // Pipeline Handler
 // =============================================================================
@@ -1732,7 +1828,9 @@ func (s *Server) handleBGSave(payload []byte) (pb.CommandType, []byte) {
 
 	var req pb.SaveRequest
 	if len(payload) > 0 {
-		proto.Unmarshal(payload, &req)
+		if err := proto.Unmarshal(payload, &req); err != nil {
+			return pb.CommandType_CMD_ERROR, s.errorPayload(err.Error())
+		}
 	}
 
 	// Default path if not specified
@@ -1768,7 +1866,9 @@ func (s *Server) handleSave(payload []byte) (pb.CommandType, []byte) {
 
 	var req pb.SaveRequest
 	if len(payload) > 0 {
-		proto.Unmarshal(payload, &req)
+		if err := proto.Unmarshal(payload, &req); err != nil {
+			return pb.CommandType_CMD_ERROR, s.errorPayload(err.Error())
+		}
 	}
 
 	// Default path if not specified
