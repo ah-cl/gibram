@@ -208,13 +208,18 @@ func (r *SnapshotReader) ReadSection() (name string, data []byte, err error) {
 
 // Close closes the snapshot reader
 func (r *SnapshotReader) Close() error {
+	var closeErr error
 	if r.gzReader != nil {
-		r.gzReader.Close()
+		if err := r.gzReader.Close(); err != nil && closeErr == nil {
+			closeErr = err
+		}
 	}
 	if r.file != nil {
-		return r.file.Close()
+		if err := r.file.Close(); err != nil && closeErr == nil {
+			closeErr = err
+		}
 	}
-	return nil
+	return closeErr
 }
 
 // CreateSnapshot creates a snapshot file

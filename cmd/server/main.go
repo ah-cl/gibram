@@ -150,8 +150,12 @@ func main() {
 	snapshotDir := filepath.Join(cfg.Server.DataDir, "snapshots")
 
 	// Create directories
-	os.MkdirAll(walDir, 0755)
-	os.MkdirAll(snapshotDir, 0755)
+	if err := os.MkdirAll(walDir, 0755); err != nil {
+		log.Warn("WAL dir create failed: %v (backup disabled)", err)
+	}
+	if err := os.MkdirAll(snapshotDir, 0755); err != nil {
+		log.Warn("Snapshot dir create failed: %v (snapshots disabled)", err)
+	}
 
 	wal, err = backup.NewWAL(walDir, backup.SyncPeriodic)
 	if err != nil {

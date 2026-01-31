@@ -13,6 +13,13 @@ func init() {
 	rand.Seed(1)
 }
 
+func mustAdd(tb testing.TB, idx Index, id uint64, vec []float32) {
+	tb.Helper()
+	if err := idx.Add(id, vec); err != nil {
+		tb.Fatalf("Add(%d) error: %v", id, err)
+	}
+}
+
 // Helper to create a random vector
 func randomVector(dim int) []float32 {
 	vec := make([]float32, dim)
@@ -90,7 +97,7 @@ func TestHNSWIndex_Remove(t *testing.T) {
 	idx := NewHNSWIndex(4, config)
 
 	vec := []float32{0.1, 0.2, 0.3, 0.4}
-	idx.Add(1, vec)
+	mustAdd(t, idx, 1, vec)
 
 	if !idx.Remove(1) {
 		t.Error("Remove() returned false")
@@ -122,7 +129,7 @@ func TestHNSWIndex_Search(t *testing.T) {
 	}
 
 	for _, v := range vectors {
-		idx.Add(v.id, v.vec)
+		mustAdd(t, idx, v.id, v.vec)
 	}
 
 	// Search for vector similar to id=1
@@ -162,8 +169,8 @@ func TestHNSWIndex_SearchKLargerThanCount(t *testing.T) {
 	config := DefaultHNSWConfig()
 	idx := NewHNSWIndex(4, config)
 
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
 
 	results := idx.Search([]float32{0.5, 0.5, 0.0, 0.0}, 10)
 
@@ -233,9 +240,9 @@ func TestHNSWIndex_SaveLoad(t *testing.T) {
 	idx := NewHNSWIndex(4, config)
 
 	// Add vectors
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
-	idx.Add(3, []float32{0.0, 0.0, 1.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 3, []float32{0.0, 0.0, 1.0, 0.0})
 
 	// Save
 	var buf bytes.Buffer
@@ -275,17 +282,24 @@ func TestHNSWIndex_ConcurrentAdd(t *testing.T) {
 
 	var wg sync.WaitGroup
 	const n = 100
+	errCh := make(chan error, n)
 
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 			vec := randomVector(16)
-			idx.Add(uint64(id), vec)
+			if err := idx.Add(uint64(id), vec); err != nil {
+				errCh <- err
+			}
 		}(i)
 	}
 
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("Add() error: %v", err)
+	}
 
 	if idx.Count() != n {
 		t.Errorf("Count() = %d, want %d", idx.Count(), n)
@@ -298,7 +312,7 @@ func TestHNSWIndex_ConcurrentSearch(t *testing.T) {
 
 	// Pre-populate
 	for i := 0; i < 50; i++ {
-		idx.Add(uint64(i), randomVector(16))
+		mustAdd(t, idx, uint64(i), randomVector(16))
 	}
 
 	var wg sync.WaitGroup
@@ -322,13 +336,16 @@ func TestHNSWIndex_ConcurrentMixed(t *testing.T) {
 	idx := NewHNSWIndex(16, config)
 
 	var wg sync.WaitGroup
+	errCh := make(chan error, 50)
 	
 	// Concurrent adds
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			idx.Add(uint64(id), randomVector(16))
+			if err := idx.Add(uint64(id), randomVector(16)); err != nil {
+				errCh <- err
+			}
 		}(i)
 	}
 
@@ -342,6 +359,10 @@ func TestHNSWIndex_ConcurrentMixed(t *testing.T) {
 	}
 
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("Add() error: %v", err)
+	}
 }
 
 // =============================================================================
@@ -352,8 +373,8 @@ func TestHNSWIndex_GetAllVectors(t *testing.T) {
 	config := DefaultHNSWConfig()
 	idx := NewHNSWIndex(4, config)
 
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
 
 	vectors := idx.GetAllVectors()
 
@@ -374,9 +395,9 @@ func TestHNSWIndex_Rebuild(t *testing.T) {
 	idx := NewHNSWIndex(4, config)
 
 	// Add some vectors
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
-	idx.Add(3, []float32{0.0, 0.0, 1.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 3, []float32{0.0, 0.0, 1.0, 0.0})
 
 	originalCount := idx.Count()
 
@@ -407,8 +428,8 @@ func TestHNSWIndex_ValidateIntegrity(t *testing.T) {
 	}
 
 	// Add vectors
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
 
 	// Should still be valid
 	if err := idx.ValidateIntegrity(); err != nil {
@@ -424,7 +445,7 @@ func TestHNSWIndex_SingleVector(t *testing.T) {
 	config := DefaultHNSWConfig()
 	idx := NewHNSWIndex(4, config)
 
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
 
 	results := idx.Search([]float32{1.0, 0.0, 0.0, 0.0}, 5)
 	if len(results) != 1 {
@@ -441,8 +462,8 @@ func TestHNSWIndex_ZeroVector(t *testing.T) {
 	idx := NewHNSWIndex(4, config)
 
 	// Zero vector should still be addable
-	idx.Add(1, []float32{0.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{0.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{1.0, 0.0, 0.0, 0.0})
 
 	if idx.Count() != 2 {
 		t.Errorf("Count() = %d, want 2", idx.Count())
@@ -454,7 +475,7 @@ func TestHNSWIndex_LargeK(t *testing.T) {
 	idx := NewHNSWIndex(4, config)
 
 	for i := 0; i < 10; i++ {
-		idx.Add(uint64(i), randomVector(4))
+		mustAdd(t, idx, uint64(i), randomVector(4))
 	}
 
 	// Request more than available
@@ -477,7 +498,7 @@ func TestHNSWIndex_SearchQuality(t *testing.T) {
 	target := normalizeVector(randomVector(32))
 
 	// Create vectors at various distances from target
-	idx.Add(1, target) // Exact match
+	mustAdd(t, idx, 1, target) // Exact match
 	
 	// Near vectors (small perturbations)
 	for i := 2; i <= 10; i++ {
@@ -485,12 +506,12 @@ func TestHNSWIndex_SearchQuality(t *testing.T) {
 		for j := range nearVec {
 			nearVec[j] = target[j] + (rand.Float32()-0.5)*0.1
 		}
-		idx.Add(uint64(i), normalizeVector(nearVec))
+		mustAdd(t, idx, uint64(i), normalizeVector(nearVec))
 	}
 
 	// Far vectors (random)
 	for i := 11; i <= 50; i++ {
-		idx.Add(uint64(i), normalizeVector(randomVector(32)))
+		mustAdd(t, idx, uint64(i), normalizeVector(randomVector(32)))
 	}
 
 	// Search for target
@@ -541,7 +562,7 @@ func TestHNSWIndex_SearchWrongDimension(t *testing.T) {
 	config := DefaultHNSWConfig()
 	idx := NewHNSWIndex(4, config)
 	
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
 	
 	// Search with wrong dimension
 	query := []float32{1.0, 0.0} // Wrong dimension
@@ -557,9 +578,9 @@ func TestHNSWIndex_RemoveEntryPoint(t *testing.T) {
 	idx := NewHNSWIndex(4, config)
 	
 	// Add vectors - first one becomes entry point
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
-	idx.Add(3, []float32{0.0, 0.0, 1.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 3, []float32{0.0, 0.0, 1.0, 0.0})
 	
 	// Remove the first one (likely entry point)
 	idx.Remove(1)
@@ -575,8 +596,8 @@ func TestHNSWIndex_RemoveAllVectors(t *testing.T) {
 	config := DefaultHNSWConfig()
 	idx := NewHNSWIndex(4, config)
 	
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
 	
 	idx.Remove(1)
 	idx.Remove(2)
@@ -600,7 +621,7 @@ func TestHNSWIndex_RemoveWithReconnection(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		vec := make([]float32, 4)
 		vec[i%4] = 1.0
-		idx.Add(uint64(i), vec)
+		mustAdd(t, idx, uint64(i), vec)
 	}
 	
 	// Remove middle vectors
@@ -635,7 +656,7 @@ func TestHNSWIndex_RebuildAfterDeletions(t *testing.T) {
 	
 	// Add vectors
 	for i := 1; i <= 20; i++ {
-		idx.Add(uint64(i), randomVector(4))
+		mustAdd(t, idx, uint64(i), randomVector(4))
 	}
 	
 	// Delete many
@@ -689,7 +710,7 @@ func TestHNSWIndex_LargeIndex(t *testing.T) {
 	// Add many vectors
 	const n = 500
 	for i := 0; i < n; i++ {
-		idx.Add(uint64(i), randomVector(64))
+		mustAdd(t, idx, uint64(i), randomVector(64))
 	}
 	
 	if idx.Count() != n {
@@ -732,7 +753,7 @@ func TestHNSWIndex_MultipleRemoveAdd(t *testing.T) {
 	// Add, remove, re-add cycle
 	for cycle := 0; cycle < 3; cycle++ {
 		for i := 1; i <= 10; i++ {
-			idx.Add(uint64(i), randomVector(4))
+			mustAdd(t, idx, uint64(i), randomVector(4))
 		}
 		for i := 1; i <= 10; i++ {
 			idx.Remove(uint64(i))
@@ -751,7 +772,7 @@ func TestHNSWIndex_ConcurrentRemove(t *testing.T) {
 	
 	// Pre-populate
 	for i := 0; i < 100; i++ {
-		idx.Add(uint64(i), randomVector(16))
+		mustAdd(t, idx, uint64(i), randomVector(16))
 	}
 	
 	var wg sync.WaitGroup
@@ -844,7 +865,7 @@ func TestBruteForceIndex_Remove(t *testing.T) {
 	idx := NewBruteForceIndex(4)
 	
 	vec := []float32{0.1, 0.2, 0.3, 0.4}
-	idx.Add(1, vec)
+	mustAdd(t, idx, 1, vec)
 	
 	if !idx.Remove(1) {
 		t.Error("Remove() should return true")
@@ -863,10 +884,10 @@ func TestBruteForceIndex_Search(t *testing.T) {
 	idx := NewBruteForceIndex(4)
 	
 	// Add vectors
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.9, 0.1, 0.0, 0.0})
-	idx.Add(3, []float32{0.0, 1.0, 0.0, 0.0})
-	idx.Add(4, []float32{0.0, 0.0, 1.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.9, 0.1, 0.0, 0.0})
+	mustAdd(t, idx, 3, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 4, []float32{0.0, 0.0, 1.0, 0.0})
 	
 	// Search
 	query := []float32{0.95, 0.05, 0.0, 0.0}
@@ -895,8 +916,8 @@ func TestBruteForceIndex_SaveLoad(t *testing.T) {
 	idx := NewBruteForceIndex(4)
 	
 	// Add vectors
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
 	
 	// Save
 	var buf bytes.Buffer
@@ -918,8 +939,8 @@ func TestBruteForceIndex_SaveLoad(t *testing.T) {
 func TestBruteForceIndex_GetAllVectors(t *testing.T) {
 	idx := NewBruteForceIndex(4)
 	
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
 	
 	vectors := idx.GetAllVectors()
 	
@@ -931,8 +952,8 @@ func TestBruteForceIndex_GetAllVectors(t *testing.T) {
 func TestBruteForceIndex_Rebuild(t *testing.T) {
 	idx := NewBruteForceIndex(4)
 	
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
 	
 	// Rebuild should succeed (no-op for brute force)
 	if err := idx.Rebuild(); err != nil {
@@ -943,7 +964,7 @@ func TestBruteForceIndex_Rebuild(t *testing.T) {
 func TestBruteForceIndex_ValidateIntegrity(t *testing.T) {
 	idx := NewBruteForceIndex(4)
 	
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
 	
 	if err := idx.ValidateIntegrity(); err != nil {
 		t.Errorf("ValidateIntegrity() error: %v", err)
@@ -959,8 +980,8 @@ func TestTryLoadWithRebuild(t *testing.T) {
 	idx := NewHNSWIndex(4, config)
 	
 	// Add some vectors
-	idx.Add(1, []float32{1.0, 0.0, 0.0, 0.0})
-	idx.Add(2, []float32{0.0, 1.0, 0.0, 0.0})
+	mustAdd(t, idx, 1, []float32{1.0, 0.0, 0.0, 0.0})
+	mustAdd(t, idx, 2, []float32{0.0, 1.0, 0.0, 0.0})
 	
 	// Save to buffer
 	var buf bytes.Buffer

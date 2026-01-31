@@ -177,11 +177,21 @@ func (w *WAL) writeEntry(entry *WALEntry) error {
 
 func (w *WAL) calculateChecksum(entry *WALEntry) uint64 {
 	h := xxhash.New()
-	binary.Write(h, binary.BigEndian, entry.LSN)
-	binary.Write(h, binary.BigEndian, entry.Timestamp)
-	h.Write([]byte{byte(entry.Type)})
-	h.Write([]byte(entry.Key))
-	h.Write(entry.Data)
+	if err := binary.Write(h, binary.BigEndian, entry.LSN); err != nil {
+		return 0
+	}
+	if err := binary.Write(h, binary.BigEndian, entry.Timestamp); err != nil {
+		return 0
+	}
+	if _, err := h.Write([]byte{byte(entry.Type)}); err != nil {
+		return 0
+	}
+	if _, err := h.Write([]byte(entry.Key)); err != nil {
+		return 0
+	}
+	if _, err := h.Write(entry.Data); err != nil {
+		return 0
+	}
 	return h.Sum64()
 }
 
@@ -213,7 +223,10 @@ func (w *WAL) Close() error {
 	defer w.mu.Unlock()
 
 	if w.file != nil {
-		w.file.Sync()
+		if err := w.file.Sync(); err != nil {
+			_ = w.file.Close()
+			return err
+		}
 		return w.file.Close()
 	}
 	return nil

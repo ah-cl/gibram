@@ -3260,11 +3260,19 @@ func TestServerIntegration_InvalidPayload(t *testing.T) {
 		Payload:   []byte("invalid protobuf data"),
 	}
 
-	frameData, _ := codec.EncodeEnvelope(env)
-	conn.Write(frameData)
+	frameData, err := codec.EncodeEnvelope(env)
+	if err != nil {
+		t.Fatalf("Failed to encode envelope: %v", err)
+	}
+	if _, err := conn.Write(frameData); err != nil {
+		t.Fatalf("Failed to write frame: %v", err)
+	}
 
 	// Read response
-	resp, _, _ := codec.DecodeEnvelope(conn)
+	resp, _, err := codec.DecodeEnvelope(conn)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
 	// Server should handle gracefully (may return error or process with defaults)
 	if resp != nil {
 		t.Logf("Response type: %v", resp.CmdType)
