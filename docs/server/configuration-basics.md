@@ -1,4 +1,4 @@
-# Configuration Basics (v0.1.0)
+# Configuration Basics (v0.2.0)
 
 Configure GibRAM server for production: TLS, authentication, persistence, and resource limits.
 
@@ -145,7 +145,7 @@ from gibram import GibRAMIndexer
 
 indexer = GibRAMIndexer(
     session_id="my-project",
-    api_key="your-secure-app-key-here"  # Not yet supported in v0.1.0
+    api_key="your-secure-app-key-here"  # Not yet supported in Python SDK
 )
 ```
 
@@ -183,13 +183,13 @@ security:
 
 **Enable Persistence**:
 
-Currently, WAL and snapshot are initialized but **manual operation only** in v0.1.0. Commands available:
+Currently, WAL and snapshot are initialized but **manual operation only**. Commands available:
 
 - `SAVE` - Create snapshot (blocking)
 - `BGSAVE` - Create snapshot (background)
 - `LASTSAVE` - Get last save timestamp
 
-**Future** (v0.2.0+): Automatic persistence configuration.
+**Future**: Automatic persistence configuration.
 
 ## Session Management
 
@@ -362,7 +362,7 @@ gibram> INFO
 
 **Fix (Development)**:
 ```python
-# Python SDK (not yet supported in v0.1.0)
+# Python SDK (no skip-verify option yet)
 # Use --insecure mode on server instead
 ```
 

@@ -389,7 +389,7 @@ class GibRAMIndexer:
 
         Args:
             query: Natural language query
-            mode: Query mode (v0.1.0 only supports "local")
+            mode: Query mode (currently only supports "local")
             top_k: Number of results
             include_entities: Include entity results
             include_text_units: Include text unit results
@@ -404,7 +404,7 @@ class GibRAMIndexer:
             ...     print(f"{entity.title}: {entity.score:.3f}")
         """
         if mode != "local":
-            raise NotImplementedError("Only 'local' mode is supported in v0.1.0")
+            raise NotImplementedError("Only 'local' mode is supported currently")
 
         # Generate query embedding
         query_embedding = self._embedder.embed_single(query)

@@ -1,4 +1,4 @@
-# Python SDK (v0.1.0)
+# Python SDK (v0.2.0)
 
 The GibRAM Python SDK provides a GraphRAG-style workflow for indexing documents and querying knowledge graphs with minimal code.
 
@@ -203,7 +203,7 @@ indexer = GibRAMIndexer(
 
 ```python
 indexer = GibRAMIndexer(
-    llm_provider="openai",       # Only OpenAI in v0.1.0
+    llm_provider="openai",       # Only OpenAI currently
     llm_api_key="sk-...",        # Or env OPENAI_API_KEY
     llm_model="gpt-4o",          # Default: gpt-4o
 )
